@@ -2750,7 +2750,7 @@ void LIVMapper::imu_cbk(const sensor_msgs::msg::Imu::ConstSharedPtr &msg_in) {
 cv::Mat LIVMapper::getImageFromMsg(
     const sensor_msgs::msg::Image::ConstSharedPtr &img_msg) {
   cv::Mat img;
-  img = cv_bridge::toCvShare(img_msg, "bgr8")->image;
+  img = cv_bridge::toCvCopy(img_msg, "bgr8")->image;
   return img;
 }
 

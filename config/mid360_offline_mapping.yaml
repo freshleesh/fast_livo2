@@ -7,7 +7,7 @@
       img_en: 1
       lidar_en: 1
       ros_driver_bug_fix: false
-      map_save_path: "/home/leesh/ifac/fast_livo/src/fast_livo/map/test_bag_map/"
+      map_save_path: "/home/leesh/ifac/fast_livo/src/fast_livo/map/vio_merged_20260410_164754/"
       enable_zupt: true
       zupt_noise: 0.05
       zupt_interval: 5

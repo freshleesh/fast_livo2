@@ -124,6 +124,6 @@
 
     relocalization:
       enabled: true
-      prior_map_dir: "/home/leesh/ifac/fast_livo/src/fast_livo/map/iphone_map"
+      prior_map_dir: "/home/leesh/ifac/fast_livo/src/fast_livo/map/iphone_vio_20260410_175011"
       initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
       use_initial_pose_topic: false

@@ -7,7 +7,7 @@
       img_en: 1
       lidar_en: 1
       ros_driver_bug_fix: false
-      map_save_path: "/home/leesh/ifac/fast_livo/src/fast_livo/map/iphone_20260408_230652/"
+      map_save_path: "/home/leesh/ifac/fast_livo/src/fast_livo/map/iphone_fixed_20260410_212140/"
       enable_zupt: false
       zupt_noise: 0.05
       zupt_interval: 5
@@ -15,15 +15,13 @@
     extrin_calib:
       # extrinsic_R = R_lidar_to_imu
       # "LiDAR" frame = camera frame (X-right, Y-down, Z-forward)
-      #   because iPhone depth is pre-aligned to wide camera
       # IMU (CoreMotion) frame: X-right, Y-up, Z-toward-user
-      # Camera→IMU: Y flips (down→up), Z flips (forward→backward)
-      # R = [[1,0,0],[0,-1,0],[0,0,-1]]
+      # Camera→IMU: Y flips, Z flips → R = [[1,0,0],[0,-1,0],[0,0,-1]]
       extrinsic_T: [0.0, 0.0, 0.0]
       extrinsic_R: [ 1.0,  0.0,  0.0,
                      0.0, -1.0,  0.0,
                      0.0,  0.0, -1.0]
-      # Rcl = R_camera_to_lidar = identity (depth already in camera frame)
+      # Rcl = identity (depth already in camera frame)
       Rcl: [1.0, 0.0, 0.0,
             0.0, 1.0, 0.0,
             0.0, 0.0, 1.0]
@@ -45,22 +43,22 @@
       lidar_time_offset: 0.0
 
     preprocess:
-      point_filter_num: 1
-      filter_size_surf: 0.05
-      lidar_type: 4  # L515 (PointXYZRGB) - matches iPhone depth image format
+      point_filter_num: 4       # 49K→12K, reduce point explosion
+      filter_size_surf: 0.08    # align with reference configs
+      lidar_type: 4             # L515 (PointXYZRGB) for iPhone depth
       scan_line: 1
       blind: 0.1
-      max_range: 5.0  # iPhone LiDAR reliable to ~5m
+      max_range: 5.0            # iPhone LiDAR reliable to ~5m
       feature_extract_enabled: false
       img_filter_en: false
       img_filter_fre: 2
 
     vio:
       max_iterations: 5
-      outlier_threshold: 1000
+      outlier_threshold: 150    # actual outlier rejection (was 1000=infinite)
       img_point_cov: 100
       patch_size: 8
-      patch_pyrimid_level: 2
+      patch_pyrimid_level: 3    # deeper pyramid for 10Hz handheld motion
       normal_en: false
       raycast_en: false
       inverse_composition_en: false
@@ -69,21 +67,21 @@
 
     imu:
       imu_en: true
-      imu_int_frame: 50
-      acc_cov: 0.5  # VINS-Mobile iPhone parameters
-      gyr_cov: 0.2
-      b_acc_cov: 0.002
-      b_gyr_cov: 0.00004
+      imu_int_frame: 10         # 10Hz depth rate (was 50 = 5 seconds of IMU!)
+      acc_cov: 1.0              # loosen IMU trust
+      gyr_cov: 0.3
+      b_acc_cov: 0.001
+      b_gyr_cov: 0.00001
 
     lio:
       max_iterations: 5
-      dept_err: 0.03
-      beam_err: 0.05
-      min_eigen_value: 0.003
-      voxel_size: 0.15
-      max_layer: 2
-      max_points_num: 50
-      layer_init_num: [5, 5, 5, 5, 5]
+      dept_err: 0.05            # iPhone depth ~5% error
+      beam_err: 0.1             # conservative angle uncertainty
+      min_eigen_value: 0.01     # reject weak planes
+      voxel_size: 0.25          # coarser voxels → more stable planes
+      max_layer: 1              # fewer subdivisions for sparse data
+      max_points_num: 100       # accumulate more samples per voxel
+      layer_init_num: [3, 3, 3, 3, 3]  # faster plane init with sparse data
       max_voxel_num: 20000
 
     local_map:
@@ -125,6 +123,6 @@
       history_keyframe_fitness_score: 0.3
 
     mapping:
-      keyframeAddingDistThreshold: 0.3
+      keyframeAddingDistThreshold: 0.5   # fewer keyframe attempts
       keyframeAddingAngleThreshold: 0.10
-      enable_gtsam: true
+      enable_gtsam: false
