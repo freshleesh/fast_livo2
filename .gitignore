@@ -1,0 +1,18 @@
+# Map data (large PCD files)
+map/
+
+# ROS2 bag files
+bag/
+
+# Build artifacts
+build/
+install/
+log/
+Log/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+.claude/channels/discord/

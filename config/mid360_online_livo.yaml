@@ -1,0 +1,120 @@
+/**:
+  ros__parameters:
+    common:
+      img_topic: "/image_raw"
+      lid_topic: "/livox/lidar"
+      imu_topic: "/livox/imu"
+      img_en: 1
+      lidar_en: 1
+      ros_driver_bug_fix: false
+      map_save_path: "/home/leesh/ifac/HoloAgent/nav_agent/humble_localization_nav2/lio_mapping_loc/map/"
+      enable_zupt: true
+      zupt_noise: 0.05
+      zupt_interval: 5
+
+    extrin_calib:
+      extrinsic_T: [-0.011,  -0.02329, 0.04412 ]  #IMU
+      extrinsic_R: [1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]
+      Rcl:  [ 0.02852689,-0.99819931, 0.05220669,
+             -0.01876917,-0.05269990,-0.99843444,
+              0.99941662, 0.02750452,-0.02023182]
+      Pcl: [0.006253, -0.018056, -0.114992]
+    wheel:
+      enable_wheel_odom: false
+      est_wheel_extrinsic: false
+      R_wheel_to_imu:  [ 0.9991943951,  0.0000000000,  -0.0401317925,
+                    0.0000000000,  -1.0000000000,  0.0000000000,
+                   0.0401317925,  0.0000000000,  -0.9991943951]
+      p_wheel_to_imu:  [0.0001,  0.00001,  0.40618 ]
+      wheel_mea_cov:  [0.005, 0.01, 0.01]
+
+
+    time_offset:
+      imu_time_offset: 0.0
+      img_time_offset: 0.0
+      exposure_time_init: 0.0
+      lidar_time_offset: 0.0
+
+    preprocess:
+      point_filter_num: 1 # 1 for mapping; 2 for reloc
+      filter_size_surf: 0.10
+      lidar_type: 7 # 1=AVIA CustomMsg, 2=VELO16, 3=OUST64, 7=MID360 PointCloud2
+      scan_line: 6
+      blind: 0.1
+      max_range: 500.0
+      feature_extract_enabled: false
+      img_filter_en: false
+      img_filter_fre: 2 # filter image frequency
+    vio:
+      max_iterations: 5
+      outlier_threshold: 1000 # 78 100 156 #100 200 500 700 infinite
+      img_point_cov: 100 # 100 1000
+      patch_size: 8
+      patch_pyrimid_level: 10
+      normal_en: true
+      raycast_en: false
+      inverse_composition_en: false
+      exposure_estimate_en: true
+      inv_expo_cov: 0.1
+
+    imu:
+      imu_en: true
+      imu_int_frame: 50
+      acc_cov: 0.2 # 0.2
+      gyr_cov: 0.5 # 0.5
+      b_acc_cov: 0.001 # 0.1
+      b_gyr_cov: 0.001 # 0.1
+
+    lio:
+      max_iterations: 3
+      dept_err: 0.02
+      beam_err: 0.05
+      min_eigen_value: 0.005 # 0.005
+      voxel_size: 0.25 #
+      max_layer: 2
+      max_points_num: 50
+      layer_init_num: [5, 5, 5, 5, 5]
+      max_voxel_num: 20000
+
+    local_map:
+      map_sliding_en: false
+      half_map_size: 100
+      sliding_thresh: 8.0
+
+    uav:
+      imu_rate_odom: false
+      gravity_align_en: true
+
+    publish:
+      dense_map_en: true
+      pub_effect_point_en: false
+      pub_plane_en: false
+      pub_scan_num: 1
+      pub_rgb_cloud_en: true # true for mapping visualization, false for reloc
+      blind_rgb_points: 0.1
+      rgb_cloud_interval: 1 # local rgb cloud interval
+      depth_en: true # publish depth image
+      viz_timer_ms: 33 # 33ms for 30Hz, 50ms for 20Hz
+
+    evo:
+      seq_name: "g1"
+      pose_output_en: false
+
+    pcd_save:
+      pcd_save_en: true # false for reloc; true for mapping；save to /map
+      colmap_output_en: false #  mainly used to generate colmap files, set false when not needed
+      interval: -1 # used to generate pcd file for per-frame, set -1 when not needed
+      filter_size_pcd: 0.04 # 0.04 for reloc to accelerate; 0.02 for mapping
+    loop:
+      loop_closure_enable_flag: false
+      loop_closure_frequency: 10.0
+      history_keyframe_search_radius: 15.0
+      history_keyframe_search_time_diff: 30.0
+      history_keyframe_search_num: 25
+      history_keyframe_fitness_score: 0.3
+    mapping:
+      keyframeAddingDistThreshold: 0.5
+      keyframeAddingAngleThreshold: 0.10
+      enable_gtsam: true
