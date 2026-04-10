@@ -1548,8 +1548,8 @@ bool LIVMapper::handleLIO() {
     transformLidar(_state.rot_end, _state.pos_end, feats_down_body,
                    feats_down_world);
     // voxelmap_manager->feats_down_world_ = feats_down_world;
-    voxelmap_manager->BuildVoxelMapLRU(feats_down_world);
-    // voxelmap_manager->BuildVoxelMap();
+    voxelmap_manager->feats_down_world_ = feats_down_world;
+    voxelmap_manager->BuildVoxelMap();
   }
 
   double t1 = omp_get_wtime();
@@ -1658,7 +1658,7 @@ bool LIVMapper::handleLIO() {
     voxelmap_manager->pv_list_[i].var = var;
   }
   if (!localization_mode_) {
-    voxelmap_manager->UpdateVoxelMapLRU(voxelmap_manager->pv_list_);
+    voxelmap_manager->UpdateVoxelMap(voxelmap_manager->pv_list_);
   }
   _pv_list = voxelmap_manager->pv_list_;
 
@@ -1694,7 +1694,7 @@ bool LIVMapper::handleLIO() {
   if (pub_effect_point_en)
     publish_effect_world(pubLaserCloudEffect, voxelmap_manager->ptpl_list_);
   if (voxelmap_manager->config_setting_.is_pub_plane_map_)
-    voxelmap_manager->pubVoxelMapLRU();
+    voxelmap_manager->pubVoxelMap();
   publish_path(pubPath);
   publish_mavros(mavros_pose_publisher);
   // In localization LIVO: run VIO after LIO with time-synchronized image selection.
@@ -2168,7 +2168,8 @@ void LIVMapper::loadPriorMap() {
   // State at origin for covariance calculation
   voxelmap_manager->state_.rot_end = M3D::Identity();
   voxelmap_manager->state_.pos_end = V3D::Zero();
-  voxelmap_manager->BuildVoxelMapLRU(global_cloud);
+  voxelmap_manager->feats_down_world_ = global_cloud;
+  voxelmap_manager->BuildVoxelMap();
   lidar_map_inited = true;
   RCLCPP_INFO(this->node->get_logger(),
               "[Reloc] Prior map loaded. Voxel count: %zu",

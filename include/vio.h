@@ -125,13 +125,6 @@ class VIOManager {
 
   ofstream fout_camera, fout_colmap, fout_tum;
   unordered_map<VOXEL_LOCATION, VOXEL_POINTS *> feat_map;
-  // Non-LRU visual feature map (replaces LRU version to avoid heap corruption)
-  unordered_map<VOXEL_LOCATION, VOXEL_POINTS *> visual_feat_map_nolru_;
-  std::unordered_map<
-      VOXEL_LOCATION,
-      std::list<std::pair<VOXEL_LOCATION, VOXEL_POINTS *>>::iterator>
-      visual_feat_map_;
-  std::list<std::pair<VOXEL_LOCATION, VOXEL_POINTS *>> feat_map_cache_;
   unordered_map<VOXEL_LOCATION, int> sub_feat_map;
   unordered_map<int, Warp *> warp_map;
   vector<VisualPoint *> retrieve_voxel_points;
@@ -151,24 +144,10 @@ class VIOManager {
       cv::Mat &img, vector<pointWithVar> &pg,
       const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &feat_map,
       double img_time);
-  void processFrame(
-      cv::Mat &img, vector<pointWithVar> &pg,
-      const std::unordered_map<
-          VOXEL_LOCATION,
-          std::list<std::pair<VOXEL_LOCATION, VoxelOctoTree *>>::iterator>
-          &feat_map,
-      double img_time);
   void retrieveFromVisualSparseMap(
       cv::Mat img, vector<pointWithVar> &pg,
       const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
-  void retrieveFromVisualSparseMapLRU(
-      cv::Mat img, vector<pointWithVar> &pg,
-      const std::unordered_map<
-          VOXEL_LOCATION,
-          std::list<std::pair<VOXEL_LOCATION, VoxelOctoTree *>>::iterator>
-          &plane_map);
   void generateVisualMapPoints(cv::Mat img, vector<pointWithVar> &pg);
-  void generateVisualMapPointsLRU(cv::Mat img, vector<pointWithVar> &pg);
 
   void setImuToLidarExtrinsic(const V3D &transl, const M3D &rot);
   void setLidarToCameraExtrinsic(vector<double> &R, vector<double> &P);
@@ -193,17 +172,11 @@ class VIOManager {
                   const int search_level, const int pyramid_level,
                   const int halfpatch_size, float *patch);
   void insertPointIntoVoxelMap(VisualPoint *pt_new);
-  void insertPointIntoVoxelMapLRU(VisualPoint *pt_new);
   void plotTrackedPoints();
   void updateFrameState(StatesGroup state);
   void projectPatchFromRefToCur();
   void updateReferencePatch(
       const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &plane_map);
-  void updateReferencePatchLRU(
-      const std::unordered_map<
-          VOXEL_LOCATION,
-          std::list<std::pair<VOXEL_LOCATION, VoxelOctoTree *>>::iterator>
-          &plane_map);
   void precomputeReferencePatches(int level);
   void dumpDataForColmap(double img_time = 0.0);
   double calculateNCC(float *ref_patch, float *cur_patch, int patch_size);

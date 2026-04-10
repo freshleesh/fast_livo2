@@ -21,11 +21,8 @@ VIOManager::~VIOManager() {
   delete visual_submap;
   for (auto &pair : warp_map) delete pair.second;
   warp_map.clear();
-  // for (auto &pair : feat_map) delete pair.second;
-  // feat_map.clear();
-  for (auto &pair : visual_feat_map_) delete pair.second->second;
-  visual_feat_map_.clear();
-  feat_map_cache_.clear();
+  for (auto &pair : feat_map) delete pair.second;
+  feat_map.clear();
 }
 
 void VIOManager::setImuToLidarExtrinsic(const V3D &transl, const M3D &rot) {
@@ -250,33 +247,6 @@ void VIOManager::insertPointIntoVoxelMap(VisualPoint *pt_new) {
   }
 }
 
-void VIOManager::insertPointIntoVoxelMapLRU(VisualPoint *pt_new) {
-  // Use the non-LRU feat_map_ hashmap directly. The LRU list-based
-  // visual_feat_map_/feat_map_cache_ causes heap corruption.
-  // NOTE: feat_map (member) is NOT the same as the processFrame parameter
-  // feat_map which shadows it. This function is called outside processFrame
-  // scope, so it correctly accesses the member.
-  V3D pt_w(pt_new->pos_[0], pt_new->pos_[1], pt_new->pos_[2]);
-  double voxel_size = 0.5;
-  float loc_xyz[3];
-  for (int j = 0; j < 3; j++) {
-    loc_xyz[j] = pt_w[j] / voxel_size;
-    if (loc_xyz[j] < 0) {
-      loc_xyz[j] -= 1.0;
-    }
-  }
-  VOXEL_LOCATION position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1],
-                          (int64_t)loc_xyz[2]);
-  auto iter = visual_feat_map_nolru_.find(position);
-  if (iter != visual_feat_map_nolru_.end()) {
-    iter->second->voxel_points.emplace_back(pt_new);
-    iter->second->count++;
-  } else {
-    VOXEL_POINTS *ot = new VOXEL_POINTS(0);
-    ot->voxel_points.emplace_back(pt_new);
-    visual_feat_map_nolru_[position] = ot;
-  }
-}
 
 void VIOManager::getWarpMatrixAffineHomography(
     const vk::AbstractCamera &cam, const V2D &px_ref, const V3D &xyz_ref,
@@ -808,12 +778,9 @@ void VIOManager::retrieveFromVisualSparseMap(
   printf("[ VIO ] Retrieve %d points from visual sparse map\n", total_points);
 }
 
-void VIOManager::retrieveFromVisualSparseMapLRU(
-    cv::Mat img, vector<pointWithVar> &pg,
-    const std::unordered_map<
-        VOXEL_LOCATION,
-        std::list<std::pair<VOXEL_LOCATION, VoxelOctoTree *>>::iterator>
-        &plane_map) {
+// retrieveFromVisualSparseMapLRU removed - using non-LRU version only
+#if 0
+void VIOManager::retrieveFromVisualSparseMapLRU_REMOVED() {
   if (visual_feat_map_nolru_.empty()) return;
 
   double ts0 = omp_get_wtime();
@@ -1232,6 +1199,7 @@ void VIOManager::retrieveFromVisualSparseMapLRU(
   // "<<t_5<<endl;
   printf("[ VIO ] Retrieve %d points from visual sparse map\n", total_points);
 }
+#endif
 
 void VIOManager::computeJacobianAndUpdateEKF(cv::Mat img) {
   if (total_points == 0) return;
@@ -1365,128 +1333,6 @@ void VIOManager::generateVisualMapPoints(cv::Mat img,
   // printf("pg.size: %d \n", pg.size());
   // printf("B1. : %.6lf \n", t_b1);
   // printf("B2. : %.6lf \n", t_b2);
-}
-
-void VIOManager::generateVisualMapPointsLRU(cv::Mat img,
-                                            vector<pointWithVar> &pg) {
-  if (pg.size() <= 10) return;
-
-  int dbg_zero_normal = 0, dbg_behind_cam = 0, dbg_out_frame = 0, dbg_in_frame = 0;
-  for (int i = 0; i < pg.size(); i++) {
-    if (pg[i].normal == V3D(0, 0, 0)) { dbg_zero_normal++; continue; }
-
-    V3D pt = pg[i].point_w;
-    double zc = new_frame_->w2c_z(pt);
-    if (zc < 0.01) { dbg_behind_cam++; continue; }
-    V2D pc(new_frame_->w2c(pt));
-
-    if (new_frame_->cam_->isInFrame(
-            pc.cast<int>(), border))  // 20px is the patch size in the matcher
-    {
-      dbg_in_frame++;
-      int index = static_cast<int>(pc[1] / grid_size) * grid_n_width +
-                  static_cast<int>(pc[0] / grid_size);
-
-      if (grid_num[index] != TYPE_MAP) {
-        float cur_value = vk::shiTomasiScore(img, pc[0], pc[1]);
-        // if (cur_value < 5) continue;
-        if (cur_value > scan_value[index]) {
-          scan_value[index] = cur_value;
-          append_voxel_points[index] = pg[i];
-          grid_num[index] = TYPE_POINTCLOUD;
-        }
-      }
-    } else {
-      dbg_out_frame++;
-    }
-  }
-  printf("[ VIO dbg LRU ] pg=%zu zero_normal=%d behind=%d out=%d in=%d\n",
-         pg.size(), dbg_zero_normal, dbg_behind_cam, dbg_out_frame, dbg_in_frame);
-  // Print sample projections for first frame
-  if (frame_count < 3) {
-    for (int i = 0; i < std::min((int)pg.size(), 5); i++) {
-      if (pg[i].normal == V3D(0,0,0)) continue;
-      V3D pt = pg[i].point_w;
-      V3D pt_cam = new_frame_->T_f_w_ * pt;
-      V2D pc = new_frame_->w2c(pt);
-      printf("  sample[%d] pw=(%.2f,%.2f,%.2f) pcam=(%.2f,%.2f,%.2f) px=(%.1f,%.1f) img=%dx%d\n",
-             i, pt[0], pt[1], pt[2], pt_cam[0], pt_cam[1], pt_cam[2], pc[0], pc[1], width, height);
-    }
-  }
-
-  for (int j = 0; j < visual_submap->add_from_voxel_map.size(); j++) {
-    V3D pt = visual_submap->add_from_voxel_map[j].point_w;
-    if (new_frame_->w2c_z(pt) < 0.01) continue;
-    V2D pc(new_frame_->w2c(pt));
-
-    if (new_frame_->cam_->isInFrame(
-            pc.cast<int>(), border))  // 20px is the patch size in the matcher
-    {
-      int index = static_cast<int>(pc[1] / grid_size) * grid_n_width +
-                  static_cast<int>(pc[0] / grid_size);
-      if (index < 0 || index >= length) continue;
-
-      if (grid_num[index] != TYPE_MAP) {
-        float cur_value = vk::shiTomasiScore(img, pc[0], pc[1]);
-        if (cur_value > scan_value[index]) {
-          scan_value[index] = cur_value;
-          append_voxel_points[index] = visual_submap->add_from_voxel_map[j];
-          grid_num[index] = TYPE_POINTCLOUD;
-        }
-      }
-    }
-  }
-
-  // double t_b1 = omp_get_wtime() - t0;
-  // t0 = omp_get_wtime();
-
-  int add = 0;
-  if (!localization_mode) {
-    // Only add new visual map points in mapping mode (not localization)
-    for (int i = 0; i < length; i++) {
-      if (grid_num[i] == TYPE_POINTCLOUD)  // && (scan_value[i]>=50))
-      {
-        pointWithVar pt_var = append_voxel_points[i];
-        V3D pt = pt_var.point_w;
-
-        V3D norm_vec(new_frame_->T_f_w_.rotationMatrix() * pt_var.normal);
-        V3D dir(new_frame_->T_f_w_ * pt);
-        dir.normalize();
-        double cos_theta = dir.dot(norm_vec);
-        // if(std::fabs(cos_theta)<0.34) continue; // 70 degree
-        V2D pc(new_frame_->w2c(pt));
-
-        float *patch = new float[patch_size_total];
-        getImagePatch(img, pc, patch, 0);
-
-        VisualPoint *pt_new = new VisualPoint(pt);
-
-        Vector3d f = cam->cam2world(pc);
-        Feature *ftr_new =
-            new Feature(pt_new, patch, pc, f, new_frame_->T_f_w_, 0);
-        ftr_new->img_ = img.clone();  // clone to prevent dangling ref
-        ftr_new->id_ = new_frame_->id_;
-        ftr_new->inv_expo_time_ = state->inv_expo_time;
-
-        pt_new->addFrameRef(ftr_new);
-        pt_new->covariance_ = pt_var.var;
-        pt_new->is_normal_initialized_ = true;
-
-        if (cos_theta < 0) {
-          pt_new->normal_ = -pt_var.normal;
-        } else {
-          pt_new->normal_ = pt_var.normal;
-        }
-
-        pt_new->previous_normal_ = pt_new->normal_;
-
-        insertPointIntoVoxelMapLRU(pt_new);
-        add += 1;
-      }
-    }
-  }
-
-  printf("[ VIO ] Append %d new visual map points\n", add);
 }
 
 void VIOManager::updateVisualMapPoints(cv::Mat img) {
@@ -1685,11 +1531,9 @@ void VIOManager::updateReferencePatch(
   }
 }
 
-void VIOManager::updateReferencePatchLRU(
-    const std::unordered_map<
-        VOXEL_LOCATION,
-        std::list<std::pair<VOXEL_LOCATION, VoxelOctoTree *>>::iterator>
-        &plane_map) {
+// updateReferencePatchLRU removed - consolidated into updateReferencePatch
+#if 0
+void VIOManager::updateReferencePatchLRU_REMOVED() {
   if (total_points == 0) return;
 
   for (int i = 0; i < visual_submap->voxel_points.size(); i++) {
@@ -1823,6 +1667,7 @@ void VIOManager::updateReferencePatchLRU(
     }
   }
 }
+#endif
 
 void VIOManager::projectPatchFromRefToCur() {
   if (total_points == 0) return;
@@ -2777,162 +2622,3 @@ void VIOManager::processFrame(
   // std::to_string(new_frame_->id_) + ".png", img_cp);
 }
 
-void VIOManager::processFrame(
-    cv::Mat &img, vector<pointWithVar> &pg,
-    const std::unordered_map<
-        VOXEL_LOCATION,
-        std::list<std::pair<VOXEL_LOCATION, VoxelOctoTree *>>::iterator>
-        &feat_map,
-    double img_time) {
-  if (img.empty()) { printf("[ VIO ] Empty Image! Skipping.\n"); return; }
-
-  if (width != img.cols || height != img.rows) {
-    cv::resize(img, img,
-               cv::Size(img.cols * image_resize_factor,
-                        img.rows * image_resize_factor),
-               0, 0, CV_INTER_LINEAR);
-  }
-  img_rgb = img.clone();
-  {
-    // Use OpenCV's cv::undistort instead of vikit's undistortImage
-    // to avoid heap corruption from vikit's internal remap buffer.
-    cv::Mat K = (cv::Mat_<double>(3, 3) <<
-        pinhole_cam->fx(), 0, pinhole_cam->cx(),
-        0, pinhole_cam->fy(), pinhole_cam->cy(),
-        0, 0, 1);
-    cv::Mat D = (cv::Mat_<double>(4, 1) <<
-        pinhole_cam->d0(), pinhole_cam->d1(),
-        pinhole_cam->d2(), pinhole_cam->d3());
-    cv::undistort(img_rgb, img_rgb_undistort, K, D);
-  }
-  img_cp = img.clone();
-  image_time = img_time;
-
-  if (img.channels() == 3) cv::cvtColor(img, img, CV_BGR2GRAY);
-
-  new_frame_.reset(new Frame(cam, img));
-  updateFrameState(*state);
-
-  resetGrid();
-
-  double t1 = omp_get_wtime();
-
-  std::cout << "[ VIO ] visual_feat_map size: " << visual_feat_map_nolru_.size()
-            << std::endl;
-  retrieveFromVisualSparseMapLRU(img, pg, feat_map);
-
-  double t2 = omp_get_wtime();
-
-  computeJacobianAndUpdateEKF(img);
-
-  double t3 = omp_get_wtime();
-
-  // Update existing visual points BEFORE generating new ones.
-  // generateVisualMapPointsLRU may evict voxels via LRU, invalidating
-  // pointers in visual_submap->voxel_points that update/refpatch still need.
-  updateVisualMapPoints(img);
-
-  double t6 = omp_get_wtime();
-
-  updateReferencePatchLRU(feat_map);
-
-  double t7 = omp_get_wtime();
-
-  generateVisualMapPointsLRU(img, pg);
-
-  double t4 = omp_get_wtime();
-
-  plotTrackedPoints();
-
-  if (plot_flag) projectPatchFromRefToCur();
-
-  double t5 = omp_get_wtime();
-
-  if (colmap_output_en) dumpDataForColmap(img_time);
-
-  frame_count++;
-  // t1→t2: retrieve, t2→t3: ekf, t3→t6: updatePts, t6→t7: refPatch,
-  // t7→t4: generate, t4→t5: plot (excluded)
-  ave_total = ave_total * (frame_count - 1) / frame_count +
-              (t4 - t1 - (t5 - t4)) / frame_count;
-
-  // printf("[ VIO ] feat_map.size(): %zu\n", feat_map.size());
-  // printf("\033[1;32m[ VIO time ]: current frame: retrieveFromVisualSparseMap
-  // time: %.6lf secs.\033[0m\n", t2 - t1); printf("\033[1;32m[ VIO time ]:
-  // current frame: computeJacobianAndUpdateEKF time: %.6lf secs, comp H: %.6lf
-  // secs, ekf: %.6lf secs.\033[0m\n", t3 - t2, computeH, ekf_time);
-  // printf("\033[1;32m[ VIO time ]: current frame: generateVisualMapPoints
-  // time: %.6lf secs.\033[0m\n", t4 - t3); printf("\033[1;32m[ VIO time ]:
-  // current frame: updateVisualMapPoints time: %.6lf secs.\033[0m\n", t6 - t5);
-  // printf("\033[1;32m[ VIO time ]: current frame: updateReferencePatch time:
-  // %.6lf secs.\033[0m\n", t7 - t6); printf("\033[1;32m[ VIO time ]: current
-  // total time: %.6lf, average total time: %.6lf secs.\033[0m\n", t7 - t1 - (t5
-  // - t4), ave_total);
-
-  // ave_build_residual_time = ave_build_residual_time * (frame_count - 1) /
-  // frame_count + (t2 - t1) / frame_count; ave_ekf_time = ave_ekf_time *
-  // (frame_count - 1) / frame_count + (t3 - t2) / frame_count;
-
-  // cout << BLUE << "ave_build_residual_time: " << ave_build_residual_time <<
-  // RESET << endl; cout << BLUE << "ave_ekf_time: " << ave_ekf_time << RESET <<
-  // endl;
-
-  printf(
-      "\033[1;34m+-------------------------------------------------------------"
-      "+\033[0m\n");
-  printf(
-      "\033[1;34m|                         VIO Time                            "
-      "|\033[0m\n");
-  printf(
-      "\033[1;34m+-------------------------------------------------------------"
-      "+\033[0m\n");
-  printf("\033[1;34m| %-29s | %-27zu |\033[0m\n", "Sparse Map Size",
-         feat_map.size());
-  printf(
-      "\033[1;34m+-------------------------------------------------------------"
-      "+\033[0m\n");
-  printf("\033[1;34m| %-29s | %-27s |\033[0m\n", "Algorithm Stage",
-         "Time (secs)");
-  printf(
-      "\033[1;34m+-------------------------------------------------------------"
-      "+\033[0m\n");
-  printf("\033[1;32m| %-29s | %-27lf |\033[0m\n", "retrieveFromVisualSparseMap",
-         t2 - t1);
-  printf("\033[1;32m| %-29s | %-27lf |\033[0m\n", "computeJacobianAndUpdateEKF",
-         t3 - t2);
-  printf("\033[1;32m| %-27s   | %-27lf |\033[0m\n", "-> computeJacobian",
-         compute_jacobian_time);
-  printf("\033[1;32m| %-27s   | %-27lf |\033[0m\n", "-> updateEKF",
-         update_ekf_time);
-  printf("\033[1;32m| %-29s | %-27lf |\033[0m\n", "updateVisualMapPoints",
-         t6 - t3);
-  printf("\033[1;32m| %-29s | %-27lf |\033[0m\n", "updateReferencePatch",
-         t7 - t6);
-  printf("\033[1;32m| %-29s | %-27lf |\033[0m\n", "generateVisualMapPoints",
-         t4 - t7);
-  printf(
-      "\033[1;34m+-------------------------------------------------------------"
-      "+\033[0m\n");
-  printf("\033[1;32m| %-29s | %-27lf |\033[0m\n", "Current Total Time",
-         t5 - t1 - (t5 - t4));
-  printf("\033[1;32m| %-29s | %-27lf |\033[0m\n", "Average Total Time",
-         ave_total);
-  printf(
-      "\033[1;34m+-------------------------------------------------------------"
-      "+\033[0m\n");
-  std::ofstream fout_time;
-  fout_time.open(std::string(ROOT_DIR) + "Log/result/vio_time.txt",
-                 std::ios::app);
-  if (!fout_time.is_open())
-    std::cerr << "Failed to open file for writing VIO time." << std::endl;
-  fout_time << std::fixed << std::setprecision(6) << t7 - t1 - (t5 - t4)
-            << std::endl;
-  // std::string text = std::to_string(int(1 / (t7 - t1 - (t5 - t4)))) + " HZ";
-  // cv::Point2f origin;
-  // origin.x = 20;
-  // origin.y = 20;
-  // cv::putText(img_cp, text, origin, cv::FONT_HERSHEY_COMPLEX, 0.6,
-  // cv::Scalar(255, 255, 255), 1, 8, 0);
-  // cv::imwrite("/home/chunran/Desktop/raycasting/" +
-  // std::to_string(new_frame_->id_) + ".png", img_cp);
-}

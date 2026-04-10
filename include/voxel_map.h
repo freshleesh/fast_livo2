@@ -192,12 +192,7 @@ class VoxelMapManager {
   int current_frame_id_ = 0;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr
       voxel_map_pub_;
-  std::list<std::pair<VOXEL_LOCATION, VoxelOctoTree *>> voxel_map_cache_;
-  std::unordered_map<
-      VOXEL_LOCATION,
-      std::list<std::pair<VOXEL_LOCATION, VoxelOctoTree *>>::iterator>
-      voxel_map_;
-  // std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> voxel_map_;
+  std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> voxel_map_;
 
   PointCloudXYZI::Ptr feats_undistort_;
   PointCloudXYZI::Ptr feats_down_body_;
@@ -231,6 +226,14 @@ class VoxelMapManager {
     feats_down_world_.reset(new PointCloudXYZI());
   };
 
+  VoxelMapManager(VoxelMapConfig &config_setting, std::unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &voxel_map)
+      : config_setting_(config_setting), voxel_map_(voxel_map) {
+    current_frame_id_ = 0;
+    feats_undistort_.reset(new PointCloudXYZI());
+    feats_down_body_.reset(new PointCloudXYZI());
+    feats_down_world_.reset(new PointCloudXYZI());
+  };
+
   void StateEstimation(StatesGroup &state_propagat);
   void StateEstimation2(StatesGroup &state_propagat);
 
@@ -239,18 +242,14 @@ class VoxelMapManager {
                       pcl::PointCloud<pcl::PointXYZI>::Ptr &trans_cloud);
 
   void BuildVoxelMap();
-  void BuildVoxelMapLRU(const PointCloudXYZI::Ptr &feats_down_world);
-  void BuildVoxelMapFromKeyframesLRU(const std::string &prior_map_dir,
-                                     const M3D &extR, const V3D &extT);
+  void BuildVoxelMapFromKeyframes(const std::string &prior_map_dir,
+                                  const M3D &extR, const V3D &extT);
   V3F RGBFromVoxel(const V3D &input_point);
 
   void UpdateVoxelMap(const std::vector<pointWithVar> &input_points);
-  void UpdateVoxelMapLRU(const std::vector<pointWithVar> &input_points);
 
   void BuildResidualListOMP(std::vector<pointWithVar> &pv_list,
                             std::vector<PointToPlane> &ptpl_list);
-  void BuildResidualListOMPLRU(std::vector<pointWithVar> &pv_list,
-                               std::vector<PointToPlane> &ptpl_list);
 
   void build_single_residual(pointWithVar &pv,
                              const VoxelOctoTree *current_octo,
@@ -258,7 +257,6 @@ class VoxelMapManager {
                              double &prob, PointToPlane &single_ptpl);
 
   void pubVoxelMap();
-  void pubVoxelMapLRU();
 
   void mapSliding();
   void clearMemOutOfMap(const int &x_max, const int &x_min, const int &y_max,
