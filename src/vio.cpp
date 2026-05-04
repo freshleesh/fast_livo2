@@ -2482,6 +2482,38 @@ void VIOManager::dumpDataForColmap(double img_time) {
   }
 }
 
+void VIOManager::bootstrapPriorVisualPoints(cv::Mat img) {
+  int bootstrapped = 0;
+  for (auto &kv : feat_map) {
+    for (VisualPoint *pt : kv.second->voxel_points) {
+      if (pt == nullptr || pt->obs_.size() > 0) continue;
+
+      V3D pt_cam = new_frame_->T_f_w_ * pt->pos_;
+      if (pt_cam[2] <= 0) continue;
+
+      V2D pc(new_frame_->w2c(pt->pos_));
+      if (!new_frame_->cam_->isInFrame(pc.cast<int>(), border)) continue;
+
+      float *patch = new float[patch_size_total];
+      getImagePatch(img, pc, patch, 0);
+
+      Vector3d f = cam->cam2world(pc);
+      Feature *ftr = new Feature(pt, patch, pc, f, new_frame_->T_f_w_, 0);
+      ftr->img_ = img;
+      ftr->id_ = new_frame_->id_;
+      ftr->inv_expo_time_ = state->inv_expo_time;
+
+      pt->addFrameRef(ftr);
+      pt->normal_ = -(pt_cam.normalized());
+      pt->previous_normal_ = pt->normal_;
+      pt->is_normal_initialized_ = true;
+      bootstrapped++;
+    }
+  }
+  printf("[Reloc] Bootstrapped %d prior visual points from first image\n",
+         bootstrapped);
+}
+
 void VIOManager::processFrame(
     cv::Mat &img, vector<pointWithVar> &pg,
     const unordered_map<VOXEL_LOCATION, VoxelOctoTree *> &lidar_feat_map,

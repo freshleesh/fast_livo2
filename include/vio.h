@@ -99,6 +99,7 @@ class VIOManager {
       has_ref_patch_cache;
   bool ncc_en = false, colmap_output_en = false;
   bool localization_mode = false;  // Skip visual map point insertion when true
+  bool prior_bootstrap_done_ = false;  // true after first-frame prior patch init
 
   int width, height, grid_n_width, grid_n_height, length;
   double image_resize_factor;
@@ -172,6 +173,7 @@ class VIOManager {
                   const int search_level, const int pyramid_level,
                   const int halfpatch_size, float *patch);
   void insertPointIntoVoxelMap(VisualPoint *pt_new);
+  void bootstrapPriorVisualPoints(cv::Mat img);
   void plotTrackedPoints();
   void updateFrameState(StatesGroup state);
   void projectPatchFromRefToCur();

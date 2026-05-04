@@ -45,7 +45,7 @@ struct Pose6D {
       rot[9];  // the preintegrated rotation (global frame) at the Lidar origin
 };
 
-struct PointXYZIRPYTRGB {
+struct EIGEN_ALIGN16 PointXYZIRPYTRGB {
   PCL_ADD_POINT4D;
   PCL_ADD_RGB;
   PCL_ADD_INTENSITY;
@@ -54,7 +54,7 @@ struct PointXYZIRPYTRGB {
   float yaw;
   double time;  // time stamp
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-} EIGEN_ALIGN16;
+};
 
 POINT_CLOUD_REGISTER_POINT_STRUCT(
     PointXYZIRPYTRGB,

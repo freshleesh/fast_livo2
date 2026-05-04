@@ -221,10 +221,10 @@ class IncreMapping {
   void optimizeMultisesseionGraph(bool _toOpt, int iteration);
   void updateSessionsPoses();
 
-  std::experimental::optional<gtsam::Pose3> doICPVirtualRelative(
+  std::optional<gtsam::Pose3> doICPVirtualRelative(
       Session& target_sess, Session& source_sess,
       const int& loop_idx_target_session, const int& loop_idx_source_session);
-  std::experimental::optional<gtsam::Pose3> doICPGlobalRelative(
+  std::optional<gtsam::Pose3> doICPGlobalRelative(
       Session& target_sess, Session& source_sess,
       const int& loop_idx_target_session, const int& loop_idx_source_session);
 

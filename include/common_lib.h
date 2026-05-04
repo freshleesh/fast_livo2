@@ -43,8 +43,10 @@ which is included as part of this source code package.
 #include <Eigen/Core>
 #include <Eigen/Dense>
 #include <Eigen/Eigen>
-#include <experimental/filesystem>  // file gcc>=8
+#ifndef __APPLE__
+#include <experimental/filesystem>  // GCC >= 8, not available on macOS/Clang
 #include <experimental/optional>
+#endif
 #include <filesystem>  // C++17 standard
 #include <optional>
 #include <unordered_map>

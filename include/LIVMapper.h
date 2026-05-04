@@ -37,6 +37,7 @@ which is included as part of this source code package.
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <image_transport/image_transport.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/header.hpp>
@@ -113,7 +114,7 @@ class LIVMapper {
   void livox_pcl_cbk(
       const livox_ros_driver2::msg::CustomMsg::ConstSharedPtr &msg_in);
   void imu_cbk(const sensor_msgs::msg::Imu::ConstSharedPtr &msg_in);
-  void img_cbk(const sensor_msgs::msg::Image::ConstSharedPtr &msg_in);
+  void img_cbk(const sensor_msgs::msg::CompressedImage::ConstSharedPtr &msg_in);
   void publish_img_rgb(const image_transport::Publisher &pubImage,
                        VIOManagerPtr vio_manager);
 
@@ -149,7 +150,7 @@ class LIVMapper {
   template <typename T>
   Eigen::Matrix<T, 3, 1> pointBodyToWorld(const Eigen::Matrix<T, 3, 1> &pi);
   cv::Mat getImageFromMsg(
-      const sensor_msgs::msg::Image::ConstSharedPtr &img_msg);
+      const sensor_msgs::msg::CompressedImage::ConstSharedPtr &img_msg);
 
   std::mutex mtx_buffer, mtx_buffer_imu_prop;
   std::condition_variable sig_buffer;
@@ -407,7 +408,7 @@ class LIVMapper {
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr voxel_pub;
   std::shared_ptr<rclcpp::SubscriptionBase> sub_pcl;
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr sub_imu;
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_img;
+  rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr sub_img;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr subOdom;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pubRobotOdom;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr

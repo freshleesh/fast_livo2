@@ -530,7 +530,7 @@ void MultiSession::IncreMapping::optimizeMultisesseionGraph(bool _toOpt,
 
 }  // optimizeMultisesseionGraph
 
-std::experimental::optional<gtsam::Pose3>
+std::optional<gtsam::Pose3>
 MultiSession::IncreMapping::doICPVirtualRelative(  // for SC loop
     Session& target_sess, Session& source_sess,
     const int& loop_idx_target_session, const int& loop_idx_source_session) {
@@ -581,7 +581,7 @@ MultiSession::IncreMapping::doICPVirtualRelative(  // for SC loop
               << icp.getFitnessScore() << " > " << loopFitnessScoreThreshold
               << "). Reject this SC loop." << std::endl;
     mtx.unlock();
-    return std::experimental::nullopt;
+    return std::nullopt;
   } else {
     mtx.lock();
     std::cout << "  [SC loop] ICP fitness test passed ("
@@ -609,7 +609,7 @@ MultiSession::IncreMapping::doICPVirtualRelative(  // for SC loop
   return poseFrom.between(poseTo);
 }  // doICPVirtualRelative
 
-std::experimental::optional<gtsam::Pose3>
+std::optional<gtsam::Pose3>
 MultiSession::IncreMapping::doICPGlobalRelative(  // For RS loop
     Session& target_sess, Session& source_sess,
     const int& loop_idx_target_session, const int& loop_idx_source_session) {
@@ -660,7 +660,7 @@ MultiSession::IncreMapping::doICPGlobalRelative(  // For RS loop
               << icp.getFitnessScore() << " > " << loopFitnessScoreThreshold
               << "). Reject this RS loop." << std::endl;
     mtx.unlock();
-    return std::experimental::nullopt;
+    return std::nullopt;
   } else {
     mtx.lock();
     std::cout << "  [RS loop] ICP fitness test passed ("

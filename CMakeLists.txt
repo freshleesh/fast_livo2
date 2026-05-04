@@ -28,12 +28,12 @@ message(STATUS "Current CPU architecture: ${CMAKE_SYSTEM_PROCESSOR}")
 
 # Specific settings for Release build
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|aarch64|ARM|AARCH64)")
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-    # 64-bit ARM optimizations (e.g., RK3588 and Jetson Orin NX)
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mcpu=native -mtune=native -ffast-math")
-    message(STATUS "Using 64-bit ARM optimizations: -O3 -mcpu=native -mtune=native -ffast-math")
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
+    # 64-bit ARM: Linux aarch64 or Apple Silicon arm64
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -ffast-math")
+    message(STATUS "Using 64-bit ARM optimizations: -O3 -ffast-math")
   else()
-    # 32-bit ARM optimizations with NEON support
+    # 32-bit ARM optimizations with NEON support (Linux only)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mcpu=native -mtune=native -mfpu=neon -ffast-math")
     message(STATUS "Using 32-bit ARM optimizations: -O3 -mcpu=native -mtune=native -mfpu=neon -ffast-math")
   endif()
@@ -181,9 +181,15 @@ ament_target_dependencies(laser_mapping ${dependencies})
 ament_target_dependencies(incremental_mapping ${dependencies})
 ament_target_dependencies(pose_estimator ${dependencies})
 # linking libraries or executables to public dependencies
-target_link_libraries(laser_mapping 
-    ${CMAKE_SOURCE_DIR}/../../install/vikit_common/lib/libvikit_common.so 
-    ${CMAKE_SOURCE_DIR}/../../install/vikit_ros/lib/libvikit_ros.so
+# Use platform-independent suffix (macOS: .dylib, Linux: .so)
+target_link_libraries(laser_mapping
+    pre
+    vio
+    lio
+    imu_proc
+    utils
+    ${CMAKE_SOURCE_DIR}/../../install/vikit_common/lib/libvikit_common${CMAKE_SHARED_LIBRARY_SUFFIX}
+    ${CMAKE_SOURCE_DIR}/../../install/vikit_ros/lib/libvikit_ros${CMAKE_SHARED_LIBRARY_SUFFIX}
     ${COMMON_DEPENDENCIES}
 )
 
@@ -193,13 +199,26 @@ target_link_libraries(lio utils ${COMMON_DEPENDENCIES} "${cpp_typesupport_target
 target_link_libraries(pre ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
 target_link_libraries(imu_proc ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
 
+# macOS: dylibs must resolve all symbols at link time (unlike Linux .so).
+# Strategy: give intermediate libs -undefined dynamic_lookup so they can leave
+# cross-library symbols unresolved, EXCEPT laser_mapping which explicitly links
+# the others. This makes libpre/libvio/liblio/libimu_proc transitive dependencies
+# of liblaser_mapping.dylib, so dyld loads them automatically when laser_mapping
+# is loaded — even if -dead_strip_dylibs removes their direct load commands from
+# the final executable.
+if(APPLE)
+  foreach(_target vio lio pre imu_proc laser_mapping utils incremental_mapping pose_estimator)
+    target_link_options(${_target} PRIVATE "-undefined" "dynamic_lookup")
+  endforeach()
+endif()
+
 add_executable(multi_session src/multi_session.cpp)
 # ament_target_dependencies(multi_session ${dependencies})
-target_link_libraries(multi_session ${COMMON_DEPENDENCIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} incremental_mapping gtsam stdc++fs "${cpp_typesupport_target}")
+target_link_libraries(multi_session ${COMMON_DEPENDENCIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} incremental_mapping gtsam "$<$<CXX_COMPILER_ID:GNU>:stdc++fs>" "${cpp_typesupport_target}")
 
 add_executable(online_relo src/online_relocalization.cpp)
 # ament_target_dependencies(online_relo ${dependencies})
-target_link_libraries(online_relo ${COMMON_DEPENDENCIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${OpenCV_LIBRARIES} pose_estimator incremental_mapping gtsam stdc++fs "${cpp_typesupport_target}")
+target_link_libraries(online_relo ${COMMON_DEPENDENCIES} ${PCL_LIBRARIES} ${PYTHON_LIBRARIES}  ${OpenCV_LIBRARIES} pose_estimator incremental_mapping gtsam "$<$<CXX_COMPILER_ID:GNU>:stdc++fs>" "${cpp_typesupport_target}")
 
 # Add the main executable
 add_executable(fastlivo_mapping src/main.cpp)

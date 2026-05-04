@@ -492,7 +492,7 @@ void LIVMapper::initializeSubscribersAndPublishers(
   sub_imu = this->node->create_subscription<sensor_msgs::msg::Imu>(
       imu_topic, qos_imu,
       std::bind(&LIVMapper::imu_cbk, this, std::placeholders::_1), imuOpt);
-  sub_img = this->node->create_subscription<sensor_msgs::msg::Image>(
+  sub_img = this->node->create_subscription<sensor_msgs::msg::CompressedImage>(
       img_topic, qos_img,
       std::bind(&LIVMapper::img_cbk, this, std::placeholders::_1), imgOpt);
   subOdom = this->node->create_subscription<nav_msgs::msg::Odometry>(
@@ -710,13 +710,12 @@ void LIVMapper::processImu() {
 void LIVMapper::stateEstimationAndMapping() {
   switch (LidarMeasures.lio_vio_flg) {
     case VIO: {
-      handleVIO();
       if (enable_gtsam && !localization_mode_) {
         getCurPose(_state);
         saveKeyFramesAndFactor();
         correctPoses();
       }
-
+      handleVIO();
       break;
     }
     case LIO:
@@ -2748,20 +2747,21 @@ void LIVMapper::imu_cbk(const sensor_msgs::msg::Imu::ConstSharedPtr &msg_in) {
 }
 
 cv::Mat LIVMapper::getImageFromMsg(
-    const sensor_msgs::msg::Image::ConstSharedPtr &img_msg) {
-  cv::Mat img;
-  img = cv_bridge::toCvCopy(img_msg, "bgr8")->image;
-  return img;
+    const sensor_msgs::msg::CompressedImage::ConstSharedPtr &img_msg) {
+  cv::Mat buf(1, img_msg->data.size(), CV_8UC1,
+              const_cast<uint8_t *>(img_msg->data.data()));
+  return cv::imdecode(buf, cv::IMREAD_COLOR);
 }
 
 // static int i = 0;
-void LIVMapper::img_cbk(const sensor_msgs::msg::Image::ConstSharedPtr &msg_in) {
+void LIVMapper::img_cbk(const sensor_msgs::msg::CompressedImage::ConstSharedPtr &msg_in) {
   if (!img_en) return;
   if (img_filter_en) {
     static int frame_counter = 0;
     if (++frame_counter % img_filter_fre != 0) return;
   }
-  sensor_msgs::msg::Image::SharedPtr msg(new sensor_msgs::msg::Image(*msg_in));
+  sensor_msgs::msg::CompressedImage::SharedPtr msg(
+      new sensor_msgs::msg::CompressedImage(*msg_in));
   // if ((abs(stamp2Sec(msg->header.stamp) - last_timestamp_img) > 0.2 &&
   // last_timestamp_img > 0) || sync_jump_flag)
   // {
@@ -3331,7 +3331,7 @@ void LIVMapper::publish_frame_world(
   if (img_en && pub_rgb_cloud_en) {
     static int pub_num = 1;
     *pcl_wait_pub += *pcl_w_wait_pub;
-    if (pub_num == pub_scan_num) {
+    if (pub_num == pub_scan_num && vio_manager->new_frame_) {
       pub_num = 1;
       size_t size = pcl_wait_pub->points.size();
       laserCloudWorldRGB->reserve(size);
