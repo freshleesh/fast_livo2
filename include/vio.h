@@ -190,7 +190,8 @@ class VIOManager {
   void warpAffine(const Matrix2d &A_cur_ref, const cv::Mat &img_ref,
                   const Vector2d &px_ref, const int level_ref,
                   const int search_level, const int pyramid_level,
-                  const int halfpatch_size, float *patch);
+                  const int halfpatch_size, float *patch,
+                  const Vector2d &img_origin = Vector2d::Zero());
   void insertPointIntoVoxelMap(VisualPoint *pt_new);
   // Seed feat_map from a prior point cloud (typically cloudGlobal_rgb.pcd or
   // cloudGlobal.pcd). Each cloud point becomes a VisualPoint with empty obs_;
@@ -201,6 +202,16 @@ class VIOManager {
   size_t seedFeatMapFromCloud(
       const pcl::PointCloud<PointType>::ConstPtr &cloud);
   void bootstrapPriorVisualPoints(cv::Mat img);
+
+  // Phase 2 vmap: persist VisualPoints with their reference patches so
+  // localization can match against mapping-time photometric data instead of
+  // re-bootstrapping patches from a possibly-misaligned first frame.
+  // writeVioChunk/readVioChunkBody emit/consume the VIO chunk payload only;
+  // the surrounding ChunkHeader is managed by the caller (LIVMapper). The
+  // chunk also carries per-VisualPoint metadata (pos, normal, flags) so we
+  // can drop bootstrap when a full prior is available.
+  bool writeVioChunk(std::ostream &os) const;
+  bool readVioChunkBody(std::istream &is);
   void plotTrackedPoints();
   void updateFrameState(StatesGroup state);
   void projectPatchFromRefToCur();

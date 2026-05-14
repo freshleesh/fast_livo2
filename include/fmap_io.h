@@ -19,7 +19,12 @@
 namespace fmap_io {
 
 constexpr uint32_t kMagic = 0x4D324C46;  // "FL2M" in little-endian
-constexpr uint32_t kVersion = 1;
+// Version 2: VIO chunk embeds a per-Feature grayscale crop so warpAffine can
+// produce real per-pose patches instead of the v1 degenerate path.
+// Version 3: crop bumped 32 -> 64 (the 32x32 size truncated samples at the
+// deepest pyramid levels and dominated the photometric residual, dragging
+// pose into a wrong direction during localization).
+constexpr uint32_t kVersion = 3;
 
 enum ChunkType : uint32_t {
   kChunkLioVoxelMap = 0x01,

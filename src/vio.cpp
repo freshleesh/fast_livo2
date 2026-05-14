@@ -12,6 +12,10 @@ which is included as part of this source code package.
 
 #include "vio.h"
 
+#include "fmap_io.h"
+#include <cstring>
+#include <fstream>
+
 using namespace Eigen;
 VIOManager::VIOManager() {
   // downSizeFilter.setLeafSize(0.2, 0.2, 0.2);
@@ -276,6 +280,307 @@ size_t VIOManager::seedFeatMapFromCloud(
   return inserted;
 }
 
+// =============================================================================
+//  VIO chunk serialization (Phase 2: persist mapping-time visual features).
+//
+//  Payload layout:
+//    [VioMapHeader]
+//      double  voxel_size            // kVisualFeatMapVoxelSize (0.5)
+//      uint32  patch_size            // 8 (one side of square patch)
+//      uint32  patch_size_total      // 64 (patch_size * patch_size)
+//      uint64  vp_count
+//    [VP records, vp_count times:]
+//      double  pos[3]
+//      double  normal[3]
+//      double  previous_normal[3]
+//      uint8   flags                  // bit 0 is_normal_initialized
+//                                     // bit 1 is_converged
+//                                     // bit 2 has_ref_patch
+//      uint8   pad[7]
+//      uint32  obs_count
+//      [Feature records, obs_count times:]
+//        FeatureRecord (below)
+//
+//  FeatureRecord layout:
+//    uint32 type                       // Feature::CORNER / EDGELET
+//    int32  level
+//    double px[2]
+//    double f[3]
+//    double T_f_w_quat[4]              // (w, x, y, z) - unit quaternion
+//    double T_f_w_trans[3]
+//    float  mean
+//    float  score
+//    double inv_expo_time
+//    float  patch[patch_size_total]    // level-0 patch only
+//
+//  We deliberately do NOT save img_ (the source image cv::Mat). Storing per-
+//  feature source images would balloon the file; instead we accept that the
+//  saved patch_ is only the level-0 representation, and (in vio.cpp's
+//  retrieve path) skip cross-level warpAffine when img_ is empty.
+// =============================================================================
+
+namespace {
+
+struct VioMapHeader {
+  double voxel_size;
+  uint32_t patch_size;
+  uint32_t patch_size_total;
+  uint64_t vp_count;
+};
+
+struct FeatureRecordFixed {
+  uint32_t type;
+  int32_t level;
+  double px[2];
+  double f[3];
+  double T_f_w_quat[4];   // w, x, y, z
+  double T_f_w_trans[3];
+  float mean;
+  float score;
+  double inv_expo_time;
+  double img_origin[2];           // (x, y) of crop top-left in original image coords
+  // patch[patch_size_total] follows
+  // crop[kFeatureCropBytes]    follows (kFeatureCropSize * kFeatureCropSize bytes,
+  //                              uint8 grayscale, row-major; all-zero when the
+  //                              mapping-time Feature had no usable img_)
+};
+
+// 64x64 source-image crop per Feature. warpAffine samples up to
+// halfpatch_size * 2^(search_level + pyramid_level) pixels from px_ref;
+// with halfpatch=4 and the typical loop case (search_level ≈ 0,
+// pyramid_level up to patch_pyrimid_level-1 = 3) this is ±32 px, which
+// matches the 64x64 crop's ±32 half-extent. Smaller crops force the
+// out-of-bounds branch in warpAffine to write zeros for the deep pyramid
+// levels, which then dominate the photometric residual and push pose in
+// the wrong direction. File-size cost: 4 KB per Feature.
+constexpr int kFeatureCropSize = 64;
+constexpr int kFeatureCropBytes = kFeatureCropSize * kFeatureCropSize;
+
+}  // namespace
+
+bool VIOManager::writeVioChunk(std::ostream &os) const {
+  return fmap_io::writeChunk(
+      os, fmap_io::kChunkVioFeatMap, [&](std::ostream &payload) -> bool {
+        // Count VPs that are worth saving (have at least one observation).
+        uint64_t vp_count = 0;
+        for (const auto &kv : feat_map) {
+          if (!kv.second) continue;
+          for (const VisualPoint *vp : kv.second->voxel_points) {
+            if (vp == nullptr || vp->obs_.empty()) continue;
+            ++vp_count;
+          }
+        }
+        VioMapHeader h{kVisualFeatMapVoxelSize,
+                       static_cast<uint32_t>(patch_size),
+                       static_cast<uint32_t>(patch_size_total), vp_count};
+        payload.write(reinterpret_cast<const char *>(&h), sizeof(h));
+
+        for (const auto &kv : feat_map) {
+          if (!kv.second) continue;
+          for (const VisualPoint *vp : kv.second->voxel_points) {
+            if (vp == nullptr || vp->obs_.empty()) continue;
+            double pos[3] = {vp->pos_(0), vp->pos_(1), vp->pos_(2)};
+            double normal[3] = {vp->normal_(0), vp->normal_(1), vp->normal_(2)};
+            double prev_normal[3] = {vp->previous_normal_(0),
+                                     vp->previous_normal_(1),
+                                     vp->previous_normal_(2)};
+            uint8_t flags = (vp->is_normal_initialized_ ? 1 : 0) |
+                            (vp->is_converged_ ? 2 : 0) |
+                            (vp->has_ref_patch_ ? 4 : 0);
+            uint8_t pad[7] = {0, 0, 0, 0, 0, 0, 0};
+            uint32_t obs_count = static_cast<uint32_t>(vp->obs_.size());
+            payload.write(reinterpret_cast<const char *>(pos), sizeof(pos));
+            payload.write(reinterpret_cast<const char *>(normal),
+                          sizeof(normal));
+            payload.write(reinterpret_cast<const char *>(prev_normal),
+                          sizeof(prev_normal));
+            payload.write(reinterpret_cast<const char *>(&flags),
+                          sizeof(uint8_t));
+            payload.write(reinterpret_cast<const char *>(pad), sizeof(pad));
+            payload.write(reinterpret_cast<const char *>(&obs_count),
+                          sizeof(uint32_t));
+
+            for (const Feature *ftr : vp->obs_) {
+              if (ftr == nullptr) continue;
+              FeatureRecordFixed rec{};
+              rec.type = static_cast<uint32_t>(ftr->type_);
+              rec.level = ftr->level_;
+              rec.px[0] = ftr->px_(0);
+              rec.px[1] = ftr->px_(1);
+              rec.f[0] = ftr->f_(0);
+              rec.f[1] = ftr->f_(1);
+              rec.f[2] = ftr->f_(2);
+              Eigen::Quaterniond q = ftr->T_f_w_.unit_quaternion();
+              rec.T_f_w_quat[0] = q.w();
+              rec.T_f_w_quat[1] = q.x();
+              rec.T_f_w_quat[2] = q.y();
+              rec.T_f_w_quat[3] = q.z();
+              Eigen::Vector3d t = ftr->T_f_w_.translation();
+              rec.T_f_w_trans[0] = t(0);
+              rec.T_f_w_trans[1] = t(1);
+              rec.T_f_w_trans[2] = t(2);
+              rec.mean = ftr->mean_;
+              rec.score = ftr->score_;
+              rec.inv_expo_time = ftr->inv_expo_time_;
+
+              // Extract a square crop centered on ftr->px_ from ftr->img_,
+              // clamping so the crop lies fully inside the source frame.
+              // If the source image is unavailable or too small, fall back
+              // to a zero-filled crop (load path will skip warp for those).
+              std::vector<uint8_t> crop_bytes(kFeatureCropBytes, 0);
+              double origin_x = 0.0, origin_y = 0.0;
+              if (!ftr->img_.empty() && ftr->img_.channels() == 1 &&
+                  ftr->img_.cols >= kFeatureCropSize &&
+                  ftr->img_.rows >= kFeatureCropSize) {
+                int u_target = static_cast<int>(std::round(ftr->px_(0))) -
+                               kFeatureCropSize / 2;
+                int v_target = static_cast<int>(std::round(ftr->px_(1))) -
+                               kFeatureCropSize / 2;
+                int u_clamp =
+                    std::max(0, std::min(u_target,
+                                         ftr->img_.cols - kFeatureCropSize));
+                int v_clamp =
+                    std::max(0, std::min(v_target,
+                                         ftr->img_.rows - kFeatureCropSize));
+                origin_x = static_cast<double>(u_clamp);
+                origin_y = static_cast<double>(v_clamp);
+                cv::Mat src_roi = ftr->img_(cv::Rect(
+                    u_clamp, v_clamp, kFeatureCropSize, kFeatureCropSize));
+                // src_roi may not be contiguous; copy row by row.
+                for (int row = 0; row < kFeatureCropSize; ++row) {
+                  std::memcpy(crop_bytes.data() + row * kFeatureCropSize,
+                              src_roi.ptr<uint8_t>(row), kFeatureCropSize);
+                }
+              }
+              rec.img_origin[0] = origin_x;
+              rec.img_origin[1] = origin_y;
+
+              payload.write(reinterpret_cast<const char *>(&rec), sizeof(rec));
+              if (ftr->patch_ != nullptr) {
+                payload.write(reinterpret_cast<const char *>(ftr->patch_),
+                              sizeof(float) * patch_size_total);
+              } else {
+                // Pad zeros so the record size is consistent.
+                std::vector<float> zeros(patch_size_total, 0.0f);
+                payload.write(reinterpret_cast<const char *>(zeros.data()),
+                              sizeof(float) * patch_size_total);
+              }
+              payload.write(reinterpret_cast<const char *>(crop_bytes.data()),
+                            kFeatureCropBytes);
+            }
+          }
+        }
+        return static_cast<bool>(payload);
+      });
+}
+
+bool VIOManager::readVioChunkBody(std::istream &is) {
+  VioMapHeader h{};
+  is.read(reinterpret_cast<char *>(&h), sizeof(h));
+  if (!is) return false;
+  if (std::abs(h.voxel_size - kVisualFeatMapVoxelSize) > 1e-9 ||
+      h.patch_size != static_cast<uint32_t>(patch_size) ||
+      h.patch_size_total != static_cast<uint32_t>(patch_size_total)) {
+    std::cerr << "[fmap] VIO chunk param mismatch "
+              << "(file voxel=" << h.voxel_size << " patch=" << h.patch_size
+              << "/" << h.patch_size_total
+              << " cfg voxel=" << kVisualFeatMapVoxelSize
+              << " patch=" << patch_size << "/" << patch_size_total
+              << ") -- skipping" << std::endl;
+    return false;
+  }
+
+  // Drop any previously seeded VPs; we are about to load the full canonical
+  // set.
+  for (auto &kv : feat_map) delete kv.second;
+  feat_map.clear();
+
+  size_t total_features = 0;
+  for (uint64_t i = 0; i < h.vp_count; ++i) {
+    double pos[3], normal[3], prev_normal[3];
+    uint8_t flags = 0;
+    uint8_t pad[7];
+    uint32_t obs_count = 0;
+    is.read(reinterpret_cast<char *>(pos), sizeof(pos));
+    is.read(reinterpret_cast<char *>(normal), sizeof(normal));
+    is.read(reinterpret_cast<char *>(prev_normal), sizeof(prev_normal));
+    is.read(reinterpret_cast<char *>(&flags), sizeof(uint8_t));
+    is.read(reinterpret_cast<char *>(pad), sizeof(pad));
+    is.read(reinterpret_cast<char *>(&obs_count), sizeof(uint32_t));
+    if (!is) {
+      std::cerr << "[fmap] VIO chunk truncated at VP " << i << std::endl;
+      return false;
+    }
+    V3D position(pos[0], pos[1], pos[2]);
+    auto *vp = new VisualPoint(position);
+    vp->normal_ = V3D(normal[0], normal[1], normal[2]);
+    vp->previous_normal_ = V3D(prev_normal[0], prev_normal[1], prev_normal[2]);
+    vp->is_normal_initialized_ = (flags & 1) != 0;
+    vp->is_converged_ = (flags & 2) != 0;
+    vp->has_ref_patch_ = (flags & 4) != 0;
+    for (uint32_t k = 0; k < obs_count; ++k) {
+      FeatureRecordFixed rec{};
+      is.read(reinterpret_cast<char *>(&rec), sizeof(rec));
+      auto *patch = new float[patch_size_total];
+      is.read(reinterpret_cast<char *>(patch),
+              sizeof(float) * patch_size_total);
+      // The source-image crop follows the patch in the same record.
+      cv::Mat img_crop(kFeatureCropSize, kFeatureCropSize, CV_8UC1);
+      is.read(reinterpret_cast<char *>(img_crop.data), kFeatureCropBytes);
+      if (!is) {
+        delete[] patch;
+        delete vp;
+        std::cerr << "[fmap] VIO chunk truncated at VP " << i << " feature "
+                  << k << std::endl;
+        return false;
+      }
+      Eigen::Quaterniond q(rec.T_f_w_quat[0], rec.T_f_w_quat[1],
+                           rec.T_f_w_quat[2], rec.T_f_w_quat[3]);
+      q.normalize();
+      Eigen::Vector3d tr(rec.T_f_w_trans[0], rec.T_f_w_trans[1],
+                         rec.T_f_w_trans[2]);
+      SE3<double> T(q, tr);
+      V2D px(rec.px[0], rec.px[1]);
+      V3D f(rec.f[0], rec.f[1], rec.f[2]);
+      auto *ftr = new Feature(vp, patch, px, f, T, rec.level);
+      ftr->type_ = static_cast<Feature::FeatureType>(rec.type);
+      ftr->mean_ = rec.mean;
+      ftr->score_ = rec.score;
+      ftr->inv_expo_time_ = rec.inv_expo_time;
+      ftr->img_origin_ =
+          Eigen::Vector2d(rec.img_origin[0], rec.img_origin[1]);
+      // Only attach the crop if the source actually had a usable image at
+      // save time (origin != 0 OR crop has non-zero pixels). With all-zero
+      // crops, warpAffine would sample garbage; better to keep img_ empty
+      // and let the retrieve path skip warp for these.
+      bool crop_present = (rec.img_origin[0] != 0.0 || rec.img_origin[1] != 0.0);
+      if (!crop_present) {
+        // Cheap nonzero check: look at a few sample pixels.
+        for (int p = 0; p < kFeatureCropBytes; p += 64) {
+          if (img_crop.data[p] != 0) {
+            crop_present = true;
+            break;
+          }
+        }
+      }
+      if (crop_present) {
+        ftr->img_ = img_crop;
+      }
+      vp->obs_.push_back(ftr);
+      if (vp->ref_patch == nullptr) {
+        vp->ref_patch = ftr;
+        vp->has_ref_patch_ = true;
+      }
+      ++total_features;
+    }
+    insertPointIntoVoxelMap(vp);
+  }
+  // Suppress the bootstrap fallback: features are already attached.
+  prior_bootstrap_done_ = true;
+  std::cout << "[fmap] loaded " << h.vp_count << " visual points / "
+            << total_features << " features (VIO)" << std::endl;
+  return true;
+}
 
 void VIOManager::getWarpMatrixAffineHomography(
     const vk::AbstractCamera &cam, const V2D &px_ref, const V3D &xyz_ref,
@@ -330,13 +635,26 @@ void VIOManager::getWarpMatrixAffine(
 void VIOManager::warpAffine(const Matrix2d &A_cur_ref, const cv::Mat &img_ref,
                             const Vector2d &px_ref, const int level_ref,
                             const int search_level, const int pyramid_level,
-                            const int halfpatch_size, float *patch) {
+                            const int halfpatch_size, float *patch,
+                            const Vector2d &img_origin) {
   const int patch_size = halfpatch_size * 2;
+  // Loaded-from-.fmap Features can carry an empty img_ when the mapping-time
+  // source frame was unavailable. The retrieve path's empty-img branch fills
+  // a level-0 patch and zeroes higher pyramid levels in that case; nothing
+  // to do here.
+  if (img_ref.empty()) return;
   const Matrix2f A_ref_cur = A_cur_ref.inverse().cast<float>();
   if (isnan(A_ref_cur(0, 0))) {
     printf("Affine warp is NaN, probably camera has no translation\n");  // TODO
     return;
   }
+  // px_ref is expressed in the source image's full-frame coordinates so the
+  // upstream camera-model code keeps working. When img_ref is a 32x32 crop
+  // (.fmap load), img_origin is the crop's top-left in those same
+  // coordinates, so we subtract it before indexing. Mapping-mode features
+  // pass img_origin = (0, 0) and the subtraction is a no-op.
+  const Vector2f px_ref_local =
+      (px_ref - img_origin).cast<float>();
 
   float *patch_ptr = patch;
   for (int y = 0; y < patch_size; ++y) {
@@ -345,7 +663,7 @@ void VIOManager::warpAffine(const Matrix2d &A_cur_ref, const cv::Mat &img_ref,
       Vector2f px_patch(x - halfpatch_size, y - halfpatch_size);
       px_patch *= (1 << search_level);
       px_patch *= (1 << pyramid_level);
-      const Vector2f px(A_ref_cur * px_patch + px_ref.cast<float>());
+      const Vector2f px(A_ref_cur * px_patch + px_ref_local);
       if (px[0] < 0 || px[1] < 0 || px[0] >= img_ref.cols - 1 ||
           px[1] >= img_ref.rows - 1)
         patch_ptr[patch_size_total * pyramid_level + y * patch_size + x] = 0;
@@ -760,11 +1078,27 @@ void VIOManager::retrieveFromVisualSparseMap(
 
       // t_1 = omp_get_wtime();
 
-      for (int pyramid_level = 0; pyramid_level <= patch_pyrimid_level - 1;
-           pyramid_level++) {
-        warpAffine(A_cur_ref_zero, ref_ftr->img_, ref_ftr->px_, ref_ftr->level_,
-                   search_level, pyramid_level, patch_size_half,
-                   patch_wrap.data());
+      if (ref_ftr->img_.empty() && ref_ftr->patch_ != nullptr) {
+        // Safety net: .fmap save couldn't extract a usable crop (e.g. point
+        // too close to the source-image edge). Use the level-0 patch only
+        // and zero higher pyramid levels. Photometric matching here is
+        // weaker but stays consistent; better than indexing into an empty
+        // cv::Mat in warpAffine.
+        std::memcpy(patch_wrap.data(), ref_ftr->patch_,
+                    sizeof(float) * patch_size_total);
+        if (patch_pyrimid_level > 1) {
+          std::memset(patch_wrap.data() + patch_size_total, 0,
+                      sizeof(float) * patch_size_total *
+                          (patch_pyrimid_level - 1));
+        }
+      } else {
+        for (int pyramid_level = 0; pyramid_level <= patch_pyrimid_level - 1;
+             pyramid_level++) {
+          warpAffine(A_cur_ref_zero, ref_ftr->img_, ref_ftr->px_,
+                     ref_ftr->level_, search_level, pyramid_level,
+                     patch_size_half, patch_wrap.data(),
+                     ref_ftr->img_origin_);
+        }
       }
 
       getImagePatch(img, pc, patch_buffer.data(), 0);
@@ -1182,11 +1516,27 @@ void VIOManager::retrieveFromVisualSparseMapLRU_REMOVED() {
 
       // t_1 = omp_get_wtime();
 
-      for (int pyramid_level = 0; pyramid_level <= patch_pyrimid_level - 1;
-           pyramid_level++) {
-        warpAffine(A_cur_ref_zero, ref_ftr->img_, ref_ftr->px_, ref_ftr->level_,
-                   search_level, pyramid_level, patch_size_half,
-                   patch_wrap.data());
+      if (ref_ftr->img_.empty() && ref_ftr->patch_ != nullptr) {
+        // Safety net: .fmap save couldn't extract a usable crop (e.g. point
+        // too close to the source-image edge). Use the level-0 patch only
+        // and zero higher pyramid levels. Photometric matching here is
+        // weaker but stays consistent; better than indexing into an empty
+        // cv::Mat in warpAffine.
+        std::memcpy(patch_wrap.data(), ref_ftr->patch_,
+                    sizeof(float) * patch_size_total);
+        if (patch_pyrimid_level > 1) {
+          std::memset(patch_wrap.data() + patch_size_total, 0,
+                      sizeof(float) * patch_size_total *
+                          (patch_pyrimid_level - 1));
+        }
+      } else {
+        for (int pyramid_level = 0; pyramid_level <= patch_pyrimid_level - 1;
+             pyramid_level++) {
+          warpAffine(A_cur_ref_zero, ref_ftr->img_, ref_ftr->px_,
+                     ref_ftr->level_, search_level, pyramid_level,
+                     patch_size_half, patch_wrap.data(),
+                     ref_ftr->img_origin_);
+        }
       }
 
       getImagePatch(img, pc, patch_buffer.data(), 0);
