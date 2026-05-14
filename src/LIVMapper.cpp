@@ -1698,7 +1698,10 @@ bool LIVMapper::handleLIO() {
   publish_mavros(mavros_pose_publisher);
   // In localization LIVO: run VIO after LIO with time-synchronized image selection.
   if (img_en && localization_mode_ && !img_buffer.empty()) {
-    double lio_time = LidarMeasures.last_lio_update_time;
+    // In localization mode slam_mode_ is forced to ONLY_LIO, whose sync_packages
+    // path only sets meas.last_lio_update_time once (at first scan). Use the
+    // class-member lidar_end_time instead, which is refreshed every scan.
+    double lio_time = lidar_end_time;
 
     // Find image closest to LIO processing time
     int best_idx = 0;
@@ -3387,8 +3390,11 @@ void LIVMapper::publish_frame_world(
   // std::cout << "all_num: " << pcl_wait_pub->points.size() << std::endl;
   /*** Publish Frame ***/
   sensor_msgs::msg::PointCloud2 laserCloudmsg;
-  // For relocalization, we need to publish the pcl_w_wait_pub
-  if (img_en && pub_rgb_cloud_en) {
+  // For relocalization, we need to publish the pcl_w_wait_pub.
+  // If the RGB path produced nothing (e.g. VIO sync is skipping and
+  // new_frame_ is stale so laserCloudWorldRGB stays empty), fall back to the
+  // plain world-frame intensity cloud so /cloud_registered is never empty.
+  if (img_en && pub_rgb_cloud_en && !laserCloudWorldRGB->empty()) {
     pcl::toROSMsg(*laserCloudWorldRGB, laserCloudmsg);
   } else {
     pcl::toROSMsg(*pcl_w_wait_pub, laserCloudmsg);

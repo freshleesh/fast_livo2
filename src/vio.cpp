@@ -147,7 +147,13 @@ void VIOManager::initializeVIO() {
   patch_size_half = static_cast<int>(patch_size / 2);
   patch_buffer.resize(patch_size_total);
   warp_len = patch_size_total * patch_pyrimid_level;
-  border = (patch_size_half + 1) * (1 << patch_pyrimid_level);
+  // Patch access in updateState reads img_ptr at offsets up to
+  // ±(patch_size_half + 1) * scale, where scale = 1 << (level + search_level).
+  // level iterates up to patch_pyrimid_level - 1 and getBestSearchLevel(..., 2)
+  // returns search_level in [0, 2], so the worst-case effective scale is
+  // 1 << (patch_pyrimid_level + 1). Anything smaller risks a SIGBUS at the
+  // image edge inside the OMP-parallel patch loop.
+  border = (patch_size_half + 1) * (1 << (patch_pyrimid_level + 1));
 
   retrieve_voxel_points.reserve(length);
   append_voxel_points.reserve(length);

@@ -46,9 +46,8 @@ else()
 endif()
 
 # Define project root directory
-# add_definitions(-DROOT_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/\")
-# Set ROOT_DIR variable to the root directory
-add_definitions(-DROOT_DIR="/")
+# Set ROOT_DIR to the package source dir so on-shutdown PCD save (Log/PCD/) lands in a writable path
+add_definitions(-DROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/")
 
 # Detect CPU core count for potential multithreading optimization
 include(ProcessorCount)
