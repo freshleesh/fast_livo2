@@ -64,6 +64,25 @@ class Warp {
   ~Warp() {}
 };
 
+// Quantization shared by mapping insertion, prior-map load, and any future
+// vmap serialization. Hand-rolled floor (cast-to-int truncates toward zero,
+// so we adjust negatives) — must stay byte-identical wherever feat_map keys
+// are computed.
+static inline VOXEL_LOCATION posToVoxelKey(const V3D &pos, double voxel_size) {
+  float loc_xyz[3];
+  for (int j = 0; j < 3; ++j) {
+    loc_xyz[j] = pos[j] / voxel_size;
+    if (loc_xyz[j] < 0) loc_xyz[j] -= 1.0f;
+  }
+  return VOXEL_LOCATION(static_cast<int64_t>(loc_xyz[0]),
+                        static_cast<int64_t>(loc_xyz[1]),
+                        static_cast<int64_t>(loc_xyz[2]));
+}
+
+// Must match the value baked into insertPointIntoVoxelMap. If you change it,
+// remap the prior visual map; otherwise lookups will miss every point.
+static constexpr double kVisualFeatMapVoxelSize = 0.5;
+
 class VOXEL_POINTS {
  public:
   std::vector<VisualPoint *> voxel_points;
@@ -173,6 +192,14 @@ class VIOManager {
                   const int search_level, const int pyramid_level,
                   const int halfpatch_size, float *patch);
   void insertPointIntoVoxelMap(VisualPoint *pt_new);
+  // Seed feat_map from a prior point cloud (typically cloudGlobal_rgb.pcd or
+  // cloudGlobal.pcd). Each cloud point becomes a VisualPoint with empty obs_;
+  // bootstrapPriorVisualPoints attaches a reference patch on the first frame.
+  // Returns the number of points actually inserted.
+  size_t seedFeatMapFromCloud(
+      const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud);
+  size_t seedFeatMapFromCloud(
+      const pcl::PointCloud<PointType>::ConstPtr &cloud);
   void bootstrapPriorVisualPoints(cv::Mat img);
   void plotTrackedPoints();
   void updateFrameState(StatesGroup state);

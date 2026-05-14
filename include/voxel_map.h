@@ -244,6 +244,14 @@ class VoxelMapManager {
   void BuildVoxelMap();
   void BuildVoxelMapFromKeyframes(const std::string &prior_map_dir,
                                   const M3D &extR, const V3D &extT);
+  // Serialize the in-memory plane-fitted voxel_map_ to disk so localization
+  // can skip BuildVoxelMap. Returns false on I/O error. Format is a chunk
+  // within the FAST-LIVO map container (see fmap_io.h).
+  bool saveVoxelMap(const std::string &path) const;
+  // Returns true if the file existed and a valid LIO_VOXEL_MAP chunk was
+  // loaded into voxel_map_. On false the caller should fall back to
+  // BuildVoxelMap from cloudGlobal.pcd.
+  bool loadVoxelMap(const std::string &path);
   V3F RGBFromVoxel(const V3D &input_point);
 
   void UpdateVoxelMap(const std::vector<pointWithVar> &input_points);

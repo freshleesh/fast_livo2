@@ -2113,6 +2113,15 @@ void LIVMapper::saveKeyFrame(const std::string &destination, float resolution) {
          << endl;
   }
 
+  // Persist the in-memory plane-fitted voxel map so localization can skip
+  // BuildVoxelMap (which produces inferior planes from the sparse PCD).
+  if (voxelmap_manager && !voxelmap_manager->voxel_map_.empty()) {
+    voxelmap_manager->saveVoxelMap(save_dir + "prior_map.fmap");
+  } else {
+    std::cout << "[fmap] skip saveVoxelMap (no voxel_map_ in memory)"
+              << std::endl;
+  }
+
   // Save RGB-colored global map if available (requires img_en: true)
   std::cout << "[RGB debug] img_en=" << img_en
             << " rgb_ptr=" << (bool)pcl_wait_save_global_rgb
@@ -2171,11 +2180,29 @@ void LIVMapper::loadPriorMap() {
   voxelmap_manager->state_.rot_end = M3D::Identity();
   voxelmap_manager->state_.pos_end = V3D::Zero();
   voxelmap_manager->feats_down_world_ = global_cloud;
-  voxelmap_manager->BuildVoxelMap();
+
+  // Prefer the serialized voxel map (planes already fitted during mapping).
+  // Fall back to BuildVoxelMap from the PCD if the file is missing or
+  // incompatible — that path is much weaker (sparse points, wrong cov) but
+  // keeps old maps usable.
+  const std::string fmap_path = prior_map_dir_ + "/prior_map.fmap";
+  if (voxelmap_manager->loadVoxelMap(fmap_path)) {
+    RCLCPP_INFO(this->node->get_logger(),
+                "[Reloc] Loaded serialized voxel map (%s). Voxel count: %zu",
+                fmap_path.c_str(), voxelmap_manager->voxel_map_.size());
+  } else {
+    RCLCPP_WARN(this->node->get_logger(),
+                "[Reloc] %s missing or invalid — falling back to "
+                "BuildVoxelMap() from cloudGlobal.pcd. Localization quality "
+                "will be lower; re-run mapping after rebuild to produce a "
+                ".fmap.",
+                fmap_path.c_str());
+    voxelmap_manager->BuildVoxelMap();
+    RCLCPP_INFO(this->node->get_logger(),
+                "[Reloc] BuildVoxelMap fallback complete. Voxel count: %zu",
+                voxelmap_manager->voxel_map_.size());
+  }
   lidar_map_inited = true;
-  RCLCPP_INFO(this->node->get_logger(),
-              "[Reloc] Prior map loaded. Voxel count: %zu",
-              voxelmap_manager->voxel_map_.size());
 
   // Publish static TF world -> camera_init (identity)
   static_br_ =
@@ -2191,12 +2218,38 @@ void LIVMapper::loadPriorMap() {
   std::string rgb_pcd = prior_map_dir_ + "/cloudGlobal_rgb.pcd";
   pcl::PointCloud<pcl::PointXYZRGB>::Ptr prior_rgb(
       new pcl::PointCloud<pcl::PointXYZRGB>());
-  if (pcl::io::loadPCDFile<pcl::PointXYZRGB>(rgb_pcd, *prior_rgb) == 0) {
+  bool rgb_loaded =
+      (pcl::io::loadPCDFile<pcl::PointXYZRGB>(rgb_pcd, *prior_rgb) == 0);
+  if (rgb_loaded) {
     pcl::toROSMsg(*prior_rgb, prior_map_msg_);
     prior_map_msg_.header.frame_id = "camera_init";
     RCLCPP_INFO(this->node->get_logger(),
                 "[Reloc] Loaded prior RGB map: %zu points",
                 prior_rgb->size());
+  }
+
+  // Seed VIO feat_map so localization VIO has prior visual points to match.
+  // Prefer the RGB cloud (only points that were actually observed by the
+  // camera during mapping) over the full LIO cloud — the RGB cloud is the
+  // closest thing we have to a "visual map" without a real .vmap file.
+  if (img_en && vio_manager) {
+    pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr seed_cloud;
+    if (rgb_loaded && !prior_rgb->empty()) {
+      seed_cloud = prior_rgb;
+    }
+    size_t seeded = 0;
+    if (seed_cloud) {
+      seeded = vio_manager->seedFeatMapFromCloud(seed_cloud);
+    } else {
+      pcl::PointCloud<PointType>::Ptr fallback(new pcl::PointCloud<PointType>());
+      pcl::copyPointCloud(*global_cloud, *fallback);
+      seeded = vio_manager->seedFeatMapFromCloud(
+          pcl::PointCloud<PointType>::ConstPtr(fallback));
+    }
+    RCLCPP_INFO(this->node->get_logger(),
+                "[Reloc] Seeded VIO feat_map with %zu prior visual points "
+                "(%zu voxels)",
+                seeded, vio_manager->feat_map.size());
   }
 }
 

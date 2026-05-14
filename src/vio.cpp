@@ -231,18 +231,8 @@ void VIOManager::getImagePatch(cv::Mat img, V2D pc, float *patch_tmp,
 
 void VIOManager::insertPointIntoVoxelMap(VisualPoint *pt_new) {
   V3D pt_w(pt_new->pos_[0], pt_new->pos_[1], pt_new->pos_[2]);
-  double voxel_size = 0.5;
-  float loc_xyz[3];
-  for (int j = 0; j < 3; j++) {
-    loc_xyz[j] = pt_w[j] / voxel_size;
-    if (loc_xyz[j] < 0) {
-      loc_xyz[j] -= 1.0;
-    }
-  }
-  VOXEL_LOCATION position((int64_t)loc_xyz[0], (int64_t)loc_xyz[1],
-                          (int64_t)loc_xyz[2]);
+  VOXEL_LOCATION position = posToVoxelKey(pt_w, kVisualFeatMapVoxelSize);
   auto iter = feat_map.find(position);
-  // auto iter = visual_feat_map_.find(position);
   if (iter != feat_map.end()) {
     iter->second->voxel_points.emplace_back(pt_new);
     iter->second->count++;
@@ -251,6 +241,39 @@ void VIOManager::insertPointIntoVoxelMap(VisualPoint *pt_new) {
     ot->voxel_points.emplace_back(pt_new);
     feat_map[position] = ot;
   }
+}
+
+size_t VIOManager::seedFeatMapFromCloud(
+    const pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr &cloud) {
+  if (!cloud || cloud->empty()) return 0;
+  size_t inserted = 0;
+  for (const auto &p : cloud->points) {
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+      continue;
+    V3D pos(p.x, p.y, p.z);
+    VisualPoint *pt = new VisualPoint(pos);
+    // No obs_ yet; bootstrap on first image will attach a reference patch.
+    // Leave is_normal_initialized_ = false so bootstrap can pick a normal from
+    // the first viewing ray.
+    insertPointIntoVoxelMap(pt);
+    ++inserted;
+  }
+  return inserted;
+}
+
+size_t VIOManager::seedFeatMapFromCloud(
+    const pcl::PointCloud<PointType>::ConstPtr &cloud) {
+  if (!cloud || cloud->empty()) return 0;
+  size_t inserted = 0;
+  for (const auto &p : cloud->points) {
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
+      continue;
+    V3D pos(p.x, p.y, p.z);
+    VisualPoint *pt = new VisualPoint(pos);
+    insertPointIntoVoxelMap(pt);
+    ++inserted;
+  }
+  return inserted;
 }
 
 
@@ -2541,6 +2564,16 @@ void VIOManager::processFrame(
 
   new_frame_.reset(new Frame(cam, img));
   updateFrameState(*state);
+
+  // In localization mode, feat_map is seeded with prior points that have no
+  // reference patches yet (obs_.empty()). Attach a patch from this first
+  // valid frame so retrieveFromVisualSparseMap has something to work with.
+  // Skipped in mapping mode since points there are created with patches in
+  // generateVisualMapPoints.
+  if (localization_mode && !prior_bootstrap_done_ && !feat_map.empty()) {
+    bootstrapPriorVisualPoints(img);
+    prior_bootstrap_done_ = true;
+  }
 
   resetGrid();
 

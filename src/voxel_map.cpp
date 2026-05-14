@@ -12,6 +12,8 @@ which is included as part of this source code package.
 
 #include "voxel_map.h"
 
+#include "fmap_io.h"
+#include <fstream>
 #include <pcl/io/pcd_io.h>
 
 #include <algorithm>
@@ -71,7 +73,7 @@ void loadVoxelConfig(rclcpp::Node::SharedPtr &node,
   try_declare.template operator()<vector<int64_t>>(
       "lio.layer_init_num", std::vector<int64_t>{5, 5, 5, 5, 5});
   try_declare.template operator()<int>("lio.max_points_num", 50);
-  try_declare.template operator()<int>("lio.min_iterations", 5);
+  try_declare.template operator()<int>("lio.max_iterations", 5);
   // MAX_VOXEL_NUM
   try_declare.template operator()<int>("lio.max_voxel_num", 5000);
   try_declare.template operator()<bool>("local_map.map_sliding_en", false);
@@ -88,7 +90,7 @@ void loadVoxelConfig(rclcpp::Node::SharedPtr &node,
   node->get_parameter("lio.dept_err", voxel_config.dept_err_);
   node->get_parameter("lio.layer_init_num", voxel_config.layer_init_num_);
   node->get_parameter("lio.max_points_num", voxel_config.max_points_num_);
-  node->get_parameter("lio.min_iterations", voxel_config.max_iterations_);
+  node->get_parameter("lio.max_iterations", voxel_config.max_iterations_);
   node->get_parameter("lio.max_voxel_num", voxel_config.MAX_VOXEL_NUM);
 
   node->get_parameter("local_map.map_sliding_en", voxel_config.map_sliding_en);
@@ -1022,6 +1024,262 @@ void VoxelMapManager::BuildVoxelMapFromKeyframes(
 
   std::cout << "[Reloc] Prior map loaded: " << total_points << " points, "
             << voxel_map_.size() << " voxels" << std::endl;
+}
+
+// =============================================================================
+//  Voxel-map serialization (Phase 1 of the persistent-prior-map work).
+//
+//  The chunk payload layout is:
+//    [LioMapHeader]
+//    repeated voxel_count times:
+//      int64 key.x, key.y, key.z
+//      double voxel_center[3]
+//      float quater_length
+//      OctreeNode (recursive, see writeOctreeNode below)
+//
+//  We do NOT save temp_points_. Once a leaf reaches max_points_num it gets
+//  swap-emptied by the mapping path (see voxel_map.cpp:188), and unfilled
+//  leaves carry no useful plane data either, so persisting the points would
+//  bloat the file without helping localization matching.
+// =============================================================================
+
+namespace {
+
+struct LioMapHeader {
+  double voxel_size;
+  int32_t max_layer;
+  float planer_threshold;
+  uint32_t voxel_count;  // top-level voxels (octree roots)
+};
+
+void writeOctreeNode(std::ostream &os, const VoxelOctoTree *node);
+VoxelOctoTree *readOctreeNode(std::istream &is, int max_layer,
+                              float planer_threshold,
+                              const std::vector<int> &layer_init_num);
+
+// Plane payload: raw matrix/vector data, no pointers. Total ~492 bytes per
+// plane (see Eigen sizes in VoxelPlane). Saved as-is into a structured
+// little-endian blob so the read path is symmetric.
+void writePlane(std::ostream &os, const VoxelPlane &p) {
+  os.write(reinterpret_cast<const char *>(p.center_.data()), sizeof(double) * 3);
+  os.write(reinterpret_cast<const char *>(p.normal_.data()), sizeof(double) * 3);
+  os.write(reinterpret_cast<const char *>(p.y_normal_.data()),
+           sizeof(double) * 3);
+  os.write(reinterpret_cast<const char *>(p.x_normal_.data()),
+           sizeof(double) * 3);
+  os.write(reinterpret_cast<const char *>(p.covariance_.data()),
+           sizeof(double) * 9);
+  os.write(reinterpret_cast<const char *>(p.plane_var_.data()),
+           sizeof(double) * 36);
+  os.write(reinterpret_cast<const char *>(&p.radius_), sizeof(float));
+  os.write(reinterpret_cast<const char *>(&p.min_eigen_value_), sizeof(float));
+  os.write(reinterpret_cast<const char *>(&p.mid_eigen_value_), sizeof(float));
+  os.write(reinterpret_cast<const char *>(&p.max_eigen_value_), sizeof(float));
+  os.write(reinterpret_cast<const char *>(&p.d_), sizeof(float));
+  os.write(reinterpret_cast<const char *>(&p.points_size_), sizeof(int));
+  uint8_t flags = (p.is_plane_ ? 1 : 0) | (p.is_init_ ? 2 : 0) |
+                  (p.is_update_ ? 4 : 0);
+  os.write(reinterpret_cast<const char *>(&flags), sizeof(uint8_t));
+  uint8_t pad[3] = {0, 0, 0};
+  os.write(reinterpret_cast<const char *>(pad), sizeof(pad));
+  os.write(reinterpret_cast<const char *>(&p.id_), sizeof(int));
+}
+
+void readPlane(std::istream &is, VoxelPlane &p) {
+  is.read(reinterpret_cast<char *>(p.center_.data()), sizeof(double) * 3);
+  is.read(reinterpret_cast<char *>(p.normal_.data()), sizeof(double) * 3);
+  is.read(reinterpret_cast<char *>(p.y_normal_.data()), sizeof(double) * 3);
+  is.read(reinterpret_cast<char *>(p.x_normal_.data()), sizeof(double) * 3);
+  is.read(reinterpret_cast<char *>(p.covariance_.data()), sizeof(double) * 9);
+  is.read(reinterpret_cast<char *>(p.plane_var_.data()), sizeof(double) * 36);
+  is.read(reinterpret_cast<char *>(&p.radius_), sizeof(float));
+  is.read(reinterpret_cast<char *>(&p.min_eigen_value_), sizeof(float));
+  is.read(reinterpret_cast<char *>(&p.mid_eigen_value_), sizeof(float));
+  is.read(reinterpret_cast<char *>(&p.max_eigen_value_), sizeof(float));
+  is.read(reinterpret_cast<char *>(&p.d_), sizeof(float));
+  is.read(reinterpret_cast<char *>(&p.points_size_), sizeof(int));
+  uint8_t flags;
+  is.read(reinterpret_cast<char *>(&flags), sizeof(uint8_t));
+  p.is_plane_ = (flags & 1) != 0;
+  p.is_init_ = (flags & 2) != 0;
+  p.is_update_ = (flags & 4) != 0;
+  uint8_t pad[3];
+  is.read(reinterpret_cast<char *>(pad), sizeof(pad));
+  is.read(reinterpret_cast<char *>(&p.id_), sizeof(int));
+}
+
+// OctreeNode wire format:
+//   int32 layer
+//   int32 octo_state
+//   uint8 init_octo  | update_enable | has_plane | _pad
+//   if has_plane: VoxelPlane payload
+//   uint8 child_mask    (bit i set => leaf i present)
+//   for each child present: recursive OctreeNode
+void writeOctreeNode(std::ostream &os, const VoxelOctoTree *node) {
+  int32_t layer = node->layer_;
+  int32_t octo_state = node->octo_state_;
+  os.write(reinterpret_cast<const char *>(&layer), sizeof(int32_t));
+  os.write(reinterpret_cast<const char *>(&octo_state), sizeof(int32_t));
+  uint8_t flags = (node->init_octo_ ? 1 : 0) |
+                  (node->update_enable_ ? 2 : 0) |
+                  ((node->plane_ptr_ && node->plane_ptr_->is_plane_) ? 4 : 0);
+  os.write(reinterpret_cast<const char *>(&flags), sizeof(uint8_t));
+  uint8_t pad[3] = {0, 0, 0};
+  os.write(reinterpret_cast<const char *>(pad), sizeof(pad));
+  if (node->plane_ptr_ && node->plane_ptr_->is_plane_) {
+    writePlane(os, *node->plane_ptr_);
+  }
+  uint8_t child_mask = 0;
+  for (int i = 0; i < 8; ++i) {
+    if (node->leaves_[i] != nullptr) child_mask |= (1u << i);
+  }
+  os.write(reinterpret_cast<const char *>(&child_mask), sizeof(uint8_t));
+  for (int i = 0; i < 8; ++i) {
+    if (node->leaves_[i] != nullptr) {
+      writeOctreeNode(os, node->leaves_[i]);
+    }
+  }
+}
+
+VoxelOctoTree *readOctreeNode(std::istream &is, int max_layer,
+                              float planer_threshold,
+                              const std::vector<int> &layer_init_num) {
+  int32_t layer = 0;
+  int32_t octo_state = 0;
+  is.read(reinterpret_cast<char *>(&layer), sizeof(int32_t));
+  is.read(reinterpret_cast<char *>(&octo_state), sizeof(int32_t));
+  uint8_t flags = 0;
+  is.read(reinterpret_cast<char *>(&flags), sizeof(uint8_t));
+  uint8_t pad[3];
+  is.read(reinterpret_cast<char *>(pad), sizeof(pad));
+
+  int max_points_num = 50;  // dummy: voxel is already past update; not used by lookup
+  int points_size_threshold = layer < (int)layer_init_num.size()
+                                  ? layer_init_num[layer]
+                                  : layer_init_num.back();
+  auto *node = new VoxelOctoTree(max_layer, layer, points_size_threshold,
+                                 max_points_num, planer_threshold);
+  node->layer_init_num_ = layer_init_num;
+  node->octo_state_ = octo_state;
+  node->init_octo_ = (flags & 1) != 0;
+  node->update_enable_ = (flags & 2) != 0;
+  bool has_plane = (flags & 4) != 0;
+  if (has_plane) {
+    readPlane(is, *node->plane_ptr_);
+  }
+  uint8_t child_mask = 0;
+  is.read(reinterpret_cast<char *>(&child_mask), sizeof(uint8_t));
+  for (int i = 0; i < 8; ++i) {
+    if (child_mask & (1u << i)) {
+      node->leaves_[i] = readOctreeNode(is, max_layer, planer_threshold,
+                                        layer_init_num);
+    }
+  }
+  return node;
+}
+
+}  // namespace
+
+bool VoxelMapManager::saveVoxelMap(const std::string &path) const {
+  std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
+  if (!ofs) {
+    std::cerr << "[fmap] saveVoxelMap: cannot open " << path << std::endl;
+    return false;
+  }
+  if (!fmap_io::writeGlobalHeader(ofs, /*chunk_count=*/1)) return false;
+
+  bool ok = fmap_io::writeChunk(
+      ofs, fmap_io::kChunkLioVoxelMap, [&](std::ostream &os) -> bool {
+        LioMapHeader h{config_setting_.max_voxel_size_,
+                       config_setting_.max_layer_,
+                       static_cast<float>(config_setting_.planner_threshold_),
+                       static_cast<uint32_t>(voxel_map_.size())};
+        os.write(reinterpret_cast<const char *>(&h), sizeof(h));
+        for (const auto &kv : voxel_map_) {
+          const VOXEL_LOCATION &key = kv.first;
+          const VoxelOctoTree *root = kv.second;
+          if (root == nullptr) continue;
+          int64_t kx = key.x, ky = key.y, kz = key.z;
+          os.write(reinterpret_cast<const char *>(&kx), sizeof(int64_t));
+          os.write(reinterpret_cast<const char *>(&ky), sizeof(int64_t));
+          os.write(reinterpret_cast<const char *>(&kz), sizeof(int64_t));
+          os.write(reinterpret_cast<const char *>(root->voxel_center_),
+                   sizeof(double) * 3);
+          os.write(reinterpret_cast<const char *>(&root->quater_length_),
+                   sizeof(float));
+          writeOctreeNode(os, root);
+        }
+        return static_cast<bool>(os);
+      });
+  if (!ok) {
+    std::cerr << "[fmap] saveVoxelMap: write failed" << std::endl;
+    return false;
+  }
+  std::cout << "[fmap] saved " << voxel_map_.size()
+            << " voxels (LIO) -> " << path << std::endl;
+  return true;
+}
+
+bool VoxelMapManager::loadVoxelMap(const std::string &path) {
+  std::ifstream ifs(path, std::ios::binary);
+  if (!ifs) return false;  // missing file -> caller does fallback
+  fmap_io::GlobalHeader gh{};
+  if (!fmap_io::readGlobalHeader(ifs, gh)) {
+    std::cerr << "[fmap] loadVoxelMap: bad header in " << path << std::endl;
+    return false;
+  }
+  for (uint32_t c = 0; c < gh.chunk_count; ++c) {
+    fmap_io::ChunkHeader ch{};
+    if (!fmap_io::readChunkHeader(ifs, ch)) return false;
+    if (ch.type != fmap_io::kChunkLioVoxelMap) {
+      ifs.seekg(static_cast<std::streamoff>(ch.length), std::ios::cur);
+      continue;
+    }
+    LioMapHeader h{};
+    ifs.read(reinterpret_cast<char *>(&h), sizeof(h));
+    if (!ifs) return false;
+    if (std::abs(h.voxel_size - config_setting_.max_voxel_size_) > 1e-6 ||
+        h.max_layer != config_setting_.max_layer_) {
+      std::cerr << "[fmap] loadVoxelMap: voxel_size/max_layer mismatch "
+                << "(file=" << h.voxel_size << "/" << h.max_layer
+                << " cfg=" << config_setting_.max_voxel_size_ << "/"
+                << config_setting_.max_layer_ << ") -- fallback" << std::endl;
+      return false;
+    }
+    std::vector<int> layer_init_num =
+        convertToIntVectorSafe(config_setting_.layer_init_num_);
+    // Throw away any partial state from a previous attempt.
+    for (auto &kv : voxel_map_) delete kv.second;
+    voxel_map_.clear();
+    for (uint32_t i = 0; i < h.voxel_count; ++i) {
+      int64_t kx, ky, kz;
+      ifs.read(reinterpret_cast<char *>(&kx), sizeof(int64_t));
+      ifs.read(reinterpret_cast<char *>(&ky), sizeof(int64_t));
+      ifs.read(reinterpret_cast<char *>(&kz), sizeof(int64_t));
+      double center[3];
+      ifs.read(reinterpret_cast<char *>(center), sizeof(double) * 3);
+      float quater_length = 0.0f;
+      ifs.read(reinterpret_cast<char *>(&quater_length), sizeof(float));
+      VoxelOctoTree *root = readOctreeNode(ifs, h.max_layer,
+                                           h.planer_threshold, layer_init_num);
+      if (!ifs) {
+        delete root;
+        std::cerr << "[fmap] loadVoxelMap: truncated chunk after " << i
+                  << " voxels" << std::endl;
+        return false;
+      }
+      root->voxel_center_[0] = center[0];
+      root->voxel_center_[1] = center[1];
+      root->voxel_center_[2] = center[2];
+      root->quater_length_ = quater_length;
+      voxel_map_[VOXEL_LOCATION(kx, ky, kz)] = root;
+    }
+    std::cout << "[fmap] loaded " << voxel_map_.size()
+              << " voxels (LIO) <- " << path << std::endl;
+    return true;
+  }
+  std::cerr << "[fmap] loadVoxelMap: no LIO chunk in " << path << std::endl;
+  return false;
 }
 
 V3F VoxelMapManager::RGBFromVoxel(const V3D &input_point) {
