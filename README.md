@@ -1,4 +1,4 @@
-# FAST-LIVO2 ROS2 HUMBLE
+# FAST-LIVO2 ROS2 JAZZY on MAC
 
 ## FAST-LIVO2: Fast, Direct LiDAR-Inertial-Visual Odometry
 
