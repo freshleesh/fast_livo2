@@ -16,3 +16,6 @@ Log/
 *.swp
 *~
 .claude/channels/discord/
+
+# macOS
+.DS_Store

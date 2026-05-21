@@ -6,9 +6,8 @@ Panels:
       Expanded:
         - /Global Options1
         - /Status1
-        - /Registered Cloud1
       Splitter Ratio: 0.6432291865348816
-    Tree Height: 787
+    Tree Height: 724
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
@@ -30,12 +29,12 @@ Visualization Manager:
   Class: ""
   Displays:
     - Class: rviz_default_plugins/Axes
-      Enabled: true
+      Enabled: false
       Length: 0.699999988079071
       Name: Axes
       Radius: 0.10000000149011612
       Reference Frame: <Fixed Frame>
-      Value: true
+      Value: false
     - Alpha: 1
       Axes Length: 2
       Axes Radius: 0.20000000298023224
@@ -56,7 +55,7 @@ Visualization Manager:
           Scale: 1
           Value: true
         Value: true
-      Enabled: true
+      Enabled: false
       Head Length: 0.30000001192092896
       Head Radius: 0.10000000149011612
       Name: Initial Pose
@@ -70,7 +69,7 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /initialpose
-      Value: true
+      Value: false
     - Angle Tolerance: 0.10000000149011612
       Class: rviz_default_plugins/Odometry
       Covariance:
@@ -88,7 +87,7 @@ Visualization Manager:
           Scale: 1
           Value: true
         Value: true
-      Enabled: true
+      Enabled: false
       Keep: 1000
       Name: Odometry
       Position Tolerance: 0.10000000149011612
@@ -109,12 +108,12 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /aft_mapped_to_init
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: -462.6264953613281
-        Min Value: -472.8696594238281
+        Max Value: 3.7427706718444824
+        Min Value: -1.0722764730453491
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -180,7 +179,7 @@ Visualization Manager:
       Buffer Length: 1
       Class: rviz_default_plugins/Path
       Color: 0; 255; 0
-      Enabled: true
+      Enabled: false
       Head Diameter: 0.30000001192092896
       Head Length: 0.20000000298023224
       Length: 0.30000001192092896
@@ -203,6 +202,70 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /path
+      Value: false
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: GlobalWaypoints
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /global_waypoints/vel_markers_tuned
+      Value: true
+    - Angle Tolerance: 0.10000000149011612
+      Class: rviz_default_plugins/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: true
+      Enabled: true
+      Keep: 1
+      Name: Odometry
+      Position Tolerance: 0.10000000149011612
+      Shape:
+        Alpha: 1
+        Axes Length: 1
+        Axes Radius: 0.10000000149011612
+        Color: 255; 25; 0
+        Head Length: 0.30000001192092896
+        Head Radius: 0.10000000149011612
+        Shaft Length: 1
+        Shaft Radius: 0.05000000074505806
+        Value: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /LIVO2/imu_propagate
+      Value: true
+    - Class: rviz_default_plugins/Marker
+      Enabled: true
+      Name: Marker
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lookahead_point
       Value: true
   Enabled: true
   Global Options:
@@ -248,33 +311,33 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 58.34903335571289
+      Distance: 12.274574279785156
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
+        X: 0.8323938846588135
+        Y: -0.7930865287780762
+        Z: 0.7390332221984863
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6500000357627869
+      Pitch: 0.6397961378097534
       Target Frame: camera_init
       Value: Orbit (rviz_default_plugins)
-      Yaw: 3.2250030040740967
+      Yaw: 2.808703660964966
     Saved: ~
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1011
+  Height: 935
   Hide Left Dock: false
   Hide Right Dock: true
-  QMainWindow State: 000000ff00000000fd00000002000000000000015600000353fc0200000004fb000000100044006900730070006c006100790073010000003f00000353000000cc00fffffffb0000001200530065006c0065006300740069006f006e000000016f000000900000005d00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007300000001c5000000ba0000005d00fffffffb0000000a00560069006500770073000000022c00000140000000a900ffffff000000030000073e0000003cfc0100000001fb0000000800540069006d006501000000000000073e0000026f00ffffff000005e20000035300000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd00000002000000000000016300000323fc0200000004fb000000100044006900730070006c006100790073010000002c00000323000000e100fffffffb0000001200530065006c0065006300740069006f006e000000016f000000900000006200fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007300000001c5000000ba0000006200fffffffb0000000a00560069006500770073000000022c00000140000000c600ffffff000000030000073e0000003cfc0100000001fb0000000800540069006d006501000000000000073e0000023f00ffffff000005da0000032300000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Time:
@@ -285,4 +348,4 @@ Window Geometry:
     collapsed: false
   Width: 1854
   X: 66
-  Y: 32
+  Y: 34

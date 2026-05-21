@@ -23,8 +23,8 @@ MAX_CONSECUTIVE_JUMP = 5.0  # meters, for mapping mode
 TRAJECTORY_TOLERANCE_RATIO = 0.10  # 10% of total path length, for reloc mode
 
 LAUNCH_CMD = {
-    "mapping": ["ros2", "launch", "fast_livo", "offline_mapping.launch.py", "use_rviz:=False"],
-    "reloc": ["ros2", "launch", "fast_livo", "relocalization.launch.py", "use_rviz:=False"],
+    "mapping": ["ros2", "launch", "fast_livo", "mapping.launch.py", "use_rviz:=False"],
+    "reloc": ["ros2", "launch", "fast_livo", "localization.launch.py", "use_rviz:=False"],
 }
 KILL_TARGETS = ["fastlivo_mapping"]
 # ─────────────────────────────────────────────────────────────────────────────
@@ -93,8 +93,8 @@ def get_map_path(mode):
     from ament_index_python.packages import get_package_share_directory
     pkg_dir = get_package_share_directory("fast_livo")
     config_name = {
-        "mapping": "mid360_offline_mapping.yaml",
-        "reloc": "mid360_relocalization.yaml",
+        "mapping": "mid360_mapping.yaml",
+        "reloc": "mid360_localization.yaml",
     }[mode]
     search_key = "prior_map_dir" if mode == "reloc" else "map_save_path"
     config_path = os.path.join(pkg_dir, "config", config_name)

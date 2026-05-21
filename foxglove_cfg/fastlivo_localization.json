@@ -1,0 +1,131 @@
+{
+  "configById": {
+    "3D!localization_3d": {
+      "cameraState": {
+        "distance": 12.27,
+        "perspective": true,
+        "phi": 36.66,
+        "thetaOffset": 160.93,
+        "targetOffset": [0.83, -0.79, 0.74],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "camera_init",
+      "scene": {
+        "enableStats": false,
+        "backgroundColor": "#000000",
+        "labelScaleFactor": 1,
+        "ignoreColladaUpAxis": false,
+        "meshUpAxis": "y_up",
+        "transforms": {
+          "showLabel": false,
+          "axisScale": 1,
+          "lineWidth": 2,
+          "lineColor": "#ffff00"
+        }
+      },
+      "transforms": {},
+      "topics": {
+        "/cloud_registered": {
+          "visible": true,
+          "colorMode": "colormap",
+          "colorField": "z",
+          "colorMap": "rainbow",
+          "pointSize": 2,
+          "pointShape": "circle",
+          "decayTime": 0,
+          "explicitAlpha": 1
+        },
+        "/Laser_map": {
+          "visible": true,
+          "colorMode": "rgba-fields",
+          "pointSize": 2,
+          "pointShape": "circle",
+          "decayTime": 0,
+          "explicitAlpha": 1
+        },
+        "/LIVO2/imu_propagate": {
+          "visible": true,
+          "type": "arrow",
+          "axisScale": 1,
+          "arrowScale": [1, 0.1, 0.1],
+          "lineWidth": 0.05,
+          "gradient": ["#ff1900ff", "#ff1900ff"],
+          "showCovariance": false
+        },
+        "/aft_mapped_to_init": {
+          "visible": false,
+          "type": "axis",
+          "axisScale": 0.5,
+          "gradient": ["#ff1900ff", "#ff1900ff"]
+        },
+        "/path": {
+          "visible": false,
+          "lineWidth": 0.03,
+          "gradient": ["#00ff00ff", "#00ff00ff"]
+        },
+        "/global_waypoints/vel_markers_tuned": {
+          "visible": true,
+          "namespaces": {}
+        },
+        "/lookahead_point": {
+          "visible": true
+        },
+        "/initialpose": {
+          "visible": false
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "grid",
+          "color": "#248eff",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "order": 1
+        }
+      },
+      "publish": {
+        "type": "pose_estimate",
+        "poseTopic": "/move_base_simple/goal",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      }
+    },
+    "Image!localization_img": {
+      "cameraState": {},
+      "followTf": "",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "imageMode": {
+        "imageTopic": "/image_raw/compressed",
+        "synchronize": false
+      }
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": "3D!localization_3d",
+    "second": "Image!localization_img",
+    "direction": "row",
+    "splitPercentage": 70
+  }
+}

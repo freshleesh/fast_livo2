@@ -86,7 +86,7 @@ class LIVMapper {
   void addLoopFactor();
   void addOdomFactor();
   bool saveFrame();
-  void saveKeyFrame(const std::string &destination = "", float resolution = 0.1f);
+  void saveKeyFrame(const std::string &name = "", float resolution = 0.1f);
   void saveOptimizedVerticesKITTIformat(gtsam::Values _estimates,
                                         std::string _filename);
   void updatePath(const PointTypePose &pose_in);
@@ -202,6 +202,7 @@ class LIVMapper {
   double imu_time_offset = 0.0;
 
   bool gravity_align_en = false, gravity_align_finished = false;
+  M3D gravity_align_rot_cache_ = M3D::Identity();   // ★ 첫 gravity alignment 결과 캐시. reloc 재초기화 시 drift 된 state.rot 대신 이 값을 베이스로 사용.
 
   // Relocalization mode
   bool localization_mode_ = false;
@@ -329,7 +330,7 @@ class LIVMapper {
   bool potentialLoopFlag = false;
   bool enable_gtsam = true;
   std::atomic<bool> save_map_requested_{false};
-  std::string save_map_destination_;
+  std::string save_map_name_;
   float save_map_resolution_{0.1f};
   nav_msgs::msg::Path globalPath;
   ScanContext::SCManager scLoop;  // sc 类

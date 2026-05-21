@@ -1180,6 +1180,79 @@ VoxelOctoTree *readOctreeNode(std::istream &is, int max_layer,
 
 }  // namespace
 
+bool VoxelMapManager::writeLioChunk(std::ostream &os) const {
+  return fmap_io::writeChunk(
+      os, fmap_io::kChunkLioVoxelMap, [&](std::ostream &payload) -> bool {
+        LioMapHeader h{config_setting_.max_voxel_size_,
+                       config_setting_.max_layer_,
+                       static_cast<float>(config_setting_.planner_threshold_),
+                       static_cast<uint32_t>(voxel_map_.size())};
+        payload.write(reinterpret_cast<const char *>(&h), sizeof(h));
+        for (const auto &kv : voxel_map_) {
+          const VOXEL_LOCATION &key = kv.first;
+          const VoxelOctoTree *root = kv.second;
+          if (root == nullptr) continue;
+          int64_t kx = key.x, ky = key.y, kz = key.z;
+          payload.write(reinterpret_cast<const char *>(&kx), sizeof(int64_t));
+          payload.write(reinterpret_cast<const char *>(&ky), sizeof(int64_t));
+          payload.write(reinterpret_cast<const char *>(&kz), sizeof(int64_t));
+          payload.write(reinterpret_cast<const char *>(root->voxel_center_),
+                        sizeof(double) * 3);
+          payload.write(reinterpret_cast<const char *>(&root->quater_length_),
+                        sizeof(float));
+          writeOctreeNode(payload, root);
+        }
+        return static_cast<bool>(payload);
+      });
+}
+
+// Called by LIVMapper after readChunkHeader has matched kChunkLioVoxelMap
+// (i.e. the type/length pair has already been consumed). Reads the LIO
+// payload and populates voxel_map_; returns false on a format mismatch or
+// truncated read.
+bool VoxelMapManager::readLioChunkBody(std::istream &is) {
+  LioMapHeader h{};
+  is.read(reinterpret_cast<char *>(&h), sizeof(h));
+  if (!is) return false;
+  if (std::abs(h.voxel_size - config_setting_.max_voxel_size_) > 1e-6 ||
+      h.max_layer != config_setting_.max_layer_) {
+    std::cerr << "[fmap] LIO chunk voxel_size/max_layer mismatch "
+              << "(file=" << h.voxel_size << "/" << h.max_layer
+              << " cfg=" << config_setting_.max_voxel_size_ << "/"
+              << config_setting_.max_layer_ << ") -- skipping" << std::endl;
+    return false;
+  }
+  std::vector<int> layer_init_num =
+      convertToIntVectorSafe(config_setting_.layer_init_num_);
+  // Throw away any partial state from a previous attempt.
+  for (auto &kv : voxel_map_) delete kv.second;
+  voxel_map_.clear();
+  for (uint32_t i = 0; i < h.voxel_count; ++i) {
+    int64_t kx, ky, kz;
+    is.read(reinterpret_cast<char *>(&kx), sizeof(int64_t));
+    is.read(reinterpret_cast<char *>(&ky), sizeof(int64_t));
+    is.read(reinterpret_cast<char *>(&kz), sizeof(int64_t));
+    double center[3];
+    is.read(reinterpret_cast<char *>(center), sizeof(double) * 3);
+    float quater_length = 0.0f;
+    is.read(reinterpret_cast<char *>(&quater_length), sizeof(float));
+    VoxelOctoTree *root =
+        readOctreeNode(is, h.max_layer, h.planer_threshold, layer_init_num);
+    if (!is) {
+      delete root;
+      std::cerr << "[fmap] LIO chunk truncated after " << i << " voxels"
+                << std::endl;
+      return false;
+    }
+    root->voxel_center_[0] = center[0];
+    root->voxel_center_[1] = center[1];
+    root->voxel_center_[2] = center[2];
+    root->quater_length_ = quater_length;
+    voxel_map_[VOXEL_LOCATION(kx, ky, kz)] = root;
+  }
+  return true;
+}
+
 bool VoxelMapManager::saveVoxelMap(const std::string &path) const {
   std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
   if (!ofs) {
@@ -1187,31 +1260,7 @@ bool VoxelMapManager::saveVoxelMap(const std::string &path) const {
     return false;
   }
   if (!fmap_io::writeGlobalHeader(ofs, /*chunk_count=*/1)) return false;
-
-  bool ok = fmap_io::writeChunk(
-      ofs, fmap_io::kChunkLioVoxelMap, [&](std::ostream &os) -> bool {
-        LioMapHeader h{config_setting_.max_voxel_size_,
-                       config_setting_.max_layer_,
-                       static_cast<float>(config_setting_.planner_threshold_),
-                       static_cast<uint32_t>(voxel_map_.size())};
-        os.write(reinterpret_cast<const char *>(&h), sizeof(h));
-        for (const auto &kv : voxel_map_) {
-          const VOXEL_LOCATION &key = kv.first;
-          const VoxelOctoTree *root = kv.second;
-          if (root == nullptr) continue;
-          int64_t kx = key.x, ky = key.y, kz = key.z;
-          os.write(reinterpret_cast<const char *>(&kx), sizeof(int64_t));
-          os.write(reinterpret_cast<const char *>(&ky), sizeof(int64_t));
-          os.write(reinterpret_cast<const char *>(&kz), sizeof(int64_t));
-          os.write(reinterpret_cast<const char *>(root->voxel_center_),
-                   sizeof(double) * 3);
-          os.write(reinterpret_cast<const char *>(&root->quater_length_),
-                   sizeof(float));
-          writeOctreeNode(os, root);
-        }
-        return static_cast<bool>(os);
-      });
-  if (!ok) {
+  if (!writeLioChunk(ofs)) {
     std::cerr << "[fmap] saveVoxelMap: write failed" << std::endl;
     return false;
   }
@@ -1222,7 +1271,7 @@ bool VoxelMapManager::saveVoxelMap(const std::string &path) const {
 
 bool VoxelMapManager::loadVoxelMap(const std::string &path) {
   std::ifstream ifs(path, std::ios::binary);
-  if (!ifs) return false;  // missing file -> caller does fallback
+  if (!ifs) return false;
   fmap_io::GlobalHeader gh{};
   if (!fmap_io::readGlobalHeader(ifs, gh)) {
     std::cerr << "[fmap] loadVoxelMap: bad header in " << path << std::endl;
@@ -1235,45 +1284,7 @@ bool VoxelMapManager::loadVoxelMap(const std::string &path) {
       ifs.seekg(static_cast<std::streamoff>(ch.length), std::ios::cur);
       continue;
     }
-    LioMapHeader h{};
-    ifs.read(reinterpret_cast<char *>(&h), sizeof(h));
-    if (!ifs) return false;
-    if (std::abs(h.voxel_size - config_setting_.max_voxel_size_) > 1e-6 ||
-        h.max_layer != config_setting_.max_layer_) {
-      std::cerr << "[fmap] loadVoxelMap: voxel_size/max_layer mismatch "
-                << "(file=" << h.voxel_size << "/" << h.max_layer
-                << " cfg=" << config_setting_.max_voxel_size_ << "/"
-                << config_setting_.max_layer_ << ") -- fallback" << std::endl;
-      return false;
-    }
-    std::vector<int> layer_init_num =
-        convertToIntVectorSafe(config_setting_.layer_init_num_);
-    // Throw away any partial state from a previous attempt.
-    for (auto &kv : voxel_map_) delete kv.second;
-    voxel_map_.clear();
-    for (uint32_t i = 0; i < h.voxel_count; ++i) {
-      int64_t kx, ky, kz;
-      ifs.read(reinterpret_cast<char *>(&kx), sizeof(int64_t));
-      ifs.read(reinterpret_cast<char *>(&ky), sizeof(int64_t));
-      ifs.read(reinterpret_cast<char *>(&kz), sizeof(int64_t));
-      double center[3];
-      ifs.read(reinterpret_cast<char *>(center), sizeof(double) * 3);
-      float quater_length = 0.0f;
-      ifs.read(reinterpret_cast<char *>(&quater_length), sizeof(float));
-      VoxelOctoTree *root = readOctreeNode(ifs, h.max_layer,
-                                           h.planer_threshold, layer_init_num);
-      if (!ifs) {
-        delete root;
-        std::cerr << "[fmap] loadVoxelMap: truncated chunk after " << i
-                  << " voxels" << std::endl;
-        return false;
-      }
-      root->voxel_center_[0] = center[0];
-      root->voxel_center_[1] = center[1];
-      root->voxel_center_[2] = center[2];
-      root->quater_length_ = quater_length;
-      voxel_map_[VOXEL_LOCATION(kx, ky, kz)] = root;
-    }
+    if (!readLioChunkBody(ifs)) return false;
     std::cout << "[fmap] loaded " << voxel_map_.size()
               << " voxels (LIO) <- " << path << std::endl;
     return true;

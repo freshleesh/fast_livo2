@@ -46,26 +46,25 @@ The following changes were made to support macOS arm64 (Apple Silicon) with cond
 
 ## Launch
 
-Each launch takes two YAML files: a main param file and a camera param file. The `use_rviz` arg defaults to `False`.
+Two launches cover all use cases — both load `mid360_*.yaml` + `camera_see3cam.yaml`. Hardware is fixed to **Livox MID360 + see3cam_24cug**, image transport is **CompressedImage on `/image_raw/compressed`**.
 
 ```bash
-# Offline mapping (replay rosbag)
-ros2 launch fast_livo offline_mapping.launch.py use_rviz:=True
+# Bring up sensors first (only needed for live runs / bag recording)
+ros2 launch camera_lidar_calibration camera_lidar_mac.launch.py
 
-# Online LIVO (live sensor stream)
-ros2 launch fast_livo online_livo.launch.py use_rviz:=True
+# Mapping — works with live sensors OR `ros2 bag play <path>` in another terminal
+ros2 launch fast_livo mapping.launch.py use_rviz:=True
 
-# Relocalization against a saved prior map
-ros2 launch fast_livo relocalization.launch.py use_rviz:=True
-
-# Multi-session map merging
-ros2 launch fast_livo multi_session.launch.py
+# Localization against a saved prior map
+ros2 launch fast_livo localization.launch.py use_rviz:=True
 ```
 
-Save the map after mapping:
+Save the map after a mapping session:
 ```bash
 ros2 service call /fast_livo/save_map fast_livo/srv/SaveMap
 ```
+
+A 10-second static test bag (lidar+imu+compressed image) lives at [test/bags/static_10s/](test/bags/static_10s/) for smoke-testing both launches without waving sensors around.
 
 ## Integration Test
 
@@ -119,9 +118,11 @@ LiDAR input adapter. Handles both Livox `CustomMsg` (types AVIA=1, MID360=7) and
 
 ### Configuration
 
-Each sensor/platform combination has its own YAML pair in [config/](config/):
-- Main params file (e.g., `mid360_offline_mapping.yaml`) — covers `common`, `extrin_calib`, `preprocess`, `vio`, `imu`, `lio`, `pgo`, `localization` sections
-- Camera params file (e.g., `camera_see3cam.yaml`) — camera intrinsics loaded by `vikit_ros`
+There are exactly two YAML pairs in [config/](config/):
+- `mid360_mapping.yaml` + `camera_see3cam.yaml` — used by `mapping.launch.py`
+- `mid360_localization.yaml` + `camera_see3cam.yaml` — used by `localization.launch.py`
+
+Both main YAMLs cover `common`, `extrin_calib`, `preprocess`, `vio`, `imu`, `lio`, `pgo`, `localization` sections.
 
 Key extrinsics:
 - `extrinsic_T/R`: IMU-to-LiDAR

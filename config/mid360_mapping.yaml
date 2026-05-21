@@ -33,7 +33,10 @@
 
     time_offset:
       imu_time_offset: 0.0
-      img_time_offset: -1778672040.206059   # bag 2026_05_13-21_45_34: B_lidar (1778672040.204) + camera latency (0.002)
+      # livox_ros_driver2 patched (lddc.cpp) to stamp PointCloud2/CustomMsg/IMU
+      # with cur_node_->now() instead of pkg.base_time — all sensors now share
+      # ROS system_clock with the camera, so this stays 0 across bags.
+      img_time_offset: 0.0
       exposure_time_init: 0.0
       lidar_time_offset: 0.0
 

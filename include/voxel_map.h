@@ -252,6 +252,13 @@ class VoxelMapManager {
   // loaded into voxel_map_. On false the caller should fall back to
   // BuildVoxelMap from cloudGlobal.pcd.
   bool loadVoxelMap(const std::string &path);
+
+  // Chunk-payload-only helpers used by the LIVMapper orchestrator when the
+  // .fmap file holds multiple chunks (LIO + VIO). The caller is responsible
+  // for writing/consuming the surrounding ChunkHeader and the file-level
+  // global header.
+  bool writeLioChunk(std::ostream &os) const;
+  bool readLioChunkBody(std::istream &is);
   V3F RGBFromVoxel(const V3D &input_point);
 
   void UpdateVoxelMap(const std::vector<pointWithVar> &input_points);

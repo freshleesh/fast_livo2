@@ -12,6 +12,8 @@ which is included as part of this source code package.
 
 #include "LIVMapper.h"
 
+#include "fmap_io.h"
+#include <fstream>
 #include <vikit/camera_loader.h>
 #define USE_CIRCLE_DRAW 1
 using namespace Sophus;
@@ -81,12 +83,24 @@ LIVMapper::LIVMapper(rclcpp::Node::SharedPtr &node, std::string node_name,
              const std::shared_ptr<fast_livo::srv::SaveMap::Request> req,
              std::shared_ptr<fast_livo::srv::SaveMap::Response> res) -> void {
     (void)request_header;
+    if (req->name.empty()) {
+      std::cout << "save_map: refusing empty name (would clobber map_save_path)."
+                << std::endl;
+      res->success = false;
+      return;
+    }
+    if (req->name.find('/') != std::string::npos ||
+        req->name == "." || req->name == "..") {
+      std::cout << "save_map: invalid name '" << req->name << "'." << std::endl;
+      res->success = false;
+      return;
+    }
     if (save_map_requested_.load()) {
       std::cout << "Save already in progress, ignoring request." << std::endl;
       res->success = false;
       return;
     }
-    save_map_destination_ = req->destination;
+    save_map_name_ = req->name;
     save_map_resolution_ = (req->resolution > 0.0f) ? req->resolution : 0.1f;
     save_map_requested_.store(true);
     res->success = true;
@@ -595,6 +609,7 @@ void LIVMapper::gravityAlignment() {
     _state.rot_end = G_R_I0 * _state.rot_end;
     _state.vel_end = G_R_I0 * _state.vel_end;
     _state.gravity = G_R_I0 * _state.gravity;
+    gravity_align_rot_cache_ = _state.rot_end;   // ★ 깨끗한 중력 정렬 결과 저장 (이후 reloc 재초기화에서 사용)
     gravity_align_finished = true;
     std::cout << "Gravity Alignment Finished" << std::endl;
   }
@@ -670,7 +685,11 @@ void LIVMapper::processImu() {
     } else if (!p_imu->imu_need_init) {
       // LIO mode: IMU init done, apply gravity alignment + initial pose
       if (gravity_align_en) gravityAlignment();
-      M3D gravity_align_rot = _state.rot_end;
+      // ★ 캐시된 깨끗한 G_R_I0 사용. 2번째 reloc 부터는 _state.rot_end 가 ESIKF
+      // 업데이트로 drift 되어 있을 수 있으므로 첫 정렬 결과를 베이스로 사용.
+      M3D gravity_align_rot = gravity_align_finished
+                                  ? gravity_align_rot_cache_
+                                  : _state.rot_end;
       _state.rot_end = reloc_init_rot_ * gravity_align_rot;
       _state.pos_end = reloc_init_pos_;
       _state.vel_end = V3D::Zero();
@@ -1935,7 +1954,7 @@ void LIVMapper::saveOptimizedVerticesKITTIformat(gtsam::Values _estimates,
            << " " << t.z() << std::endl;
   }
 }
-void LIVMapper::saveKeyFrame(const std::string &destination, float resolution) {
+void LIVMapper::saveKeyFrame(const std::string &name, float resolution) {
   /**************** data saver runs when programe is closing ****************/
   std::cout << "**************** data saver runs when programe is closing "
                "****************"
@@ -1959,10 +1978,20 @@ void LIVMapper::saveKeyFrame(const std::string &destination, float resolution) {
   isam->update();
   isamCurrentEstimate = isam->calculateBestEstimate();
 
-  // save key frame poses
-  string save_dir = destination.empty() ? map_save_path : destination;
+  // Compose save dir as <map_save_path>/<name>/. Empty name is rejected at the
+  // service layer; this is a defensive second check so we never operate on the
+  // parent map_save_path itself (fsmkdir/remove_all would wipe sibling maps).
+  if (name.empty()) {
+    std::cerr << "saveKeyFrame: empty name, aborting save" << std::endl;
+    return;
+  }
+  string save_dir = map_save_path;
+  if (save_dir.empty()) save_dir = "./";
   if (save_dir.back() != '/') save_dir += '/';
-  fsmkdir(save_dir);
+  save_dir += name + '/';
+  // Plain create_directories — do NOT use fsmkdir here; fsmkdir does
+  // remove_all() first and would destroy any prior save under this name.
+  std::filesystem::create_directories(save_dir);
 
   // save pose graph
   cout << "****************************************************" << endl;
@@ -2113,10 +2142,25 @@ void LIVMapper::saveKeyFrame(const std::string &destination, float resolution) {
          << endl;
   }
 
-  // Persist the in-memory plane-fitted voxel map so localization can skip
-  // BuildVoxelMap (which produces inferior planes from the sparse PCD).
+  // Persist the in-memory plane-fitted voxel map (LIO chunk only) so that
+  // localization can skip BuildVoxelMap. Visual reference patches are not
+  // saved — VIO bootstraps from the first frame at localization time.
   if (voxelmap_manager && !voxelmap_manager->voxel_map_.empty()) {
-    voxelmap_manager->saveVoxelMap(save_dir + "prior_map.fmap");
+    const std::string fmap_path = save_dir + "prior_map.fmap";
+    std::ofstream ofs(fmap_path, std::ios::binary | std::ios::trunc);
+    if (!ofs) {
+      std::cerr << "[fmap] cannot open " << fmap_path << " for write"
+                << std::endl;
+    } else {
+      bool ok = fmap_io::writeGlobalHeader(ofs, /*chunk_count=*/1);
+      ok = ok && voxelmap_manager->writeLioChunk(ofs);
+      if (!ok) {
+        std::cerr << "[fmap] write failed for " << fmap_path << std::endl;
+      } else {
+        std::cout << "[fmap] wrote 1 chunk (LIO) -> " << fmap_path
+                  << std::endl;
+      }
+    }
   } else {
     std::cout << "[fmap] skip saveVoxelMap (no voxel_map_ in memory)"
               << std::endl;
@@ -2181,18 +2225,48 @@ void LIVMapper::loadPriorMap() {
   voxelmap_manager->state_.pos_end = V3D::Zero();
   voxelmap_manager->feats_down_world_ = global_cloud;
 
-  // Prefer the serialized voxel map (planes already fitted during mapping).
-  // Fall back to BuildVoxelMap from the PCD if the file is missing or
-  // incompatible — that path is much weaker (sparse points, wrong cov) but
-  // keeps old maps usable.
+  // Prefer the serialized voxel map (planes + visual features already fitted
+  // during mapping). Walk the .fmap chunk list and dispatch by type. Fall
+  // back to BuildVoxelMap if the LIO chunk is missing or incompatible —
+  // that path is much weaker (sparse points, wrong cov) but keeps old maps
+  // usable. VIO chunk is optional (LIO-only mapping won't have one).
   const std::string fmap_path = prior_map_dir_ + "/prior_map.fmap";
-  if (voxelmap_manager->loadVoxelMap(fmap_path)) {
+  bool lio_loaded = false;
+  bool vio_loaded = false;
+  std::ifstream ifs(fmap_path, std::ios::binary);
+  if (ifs) {
+    fmap_io::GlobalHeader gh{};
+    if (fmap_io::readGlobalHeader(ifs, gh)) {
+      for (uint32_t c = 0; c < gh.chunk_count; ++c) {
+        fmap_io::ChunkHeader ch{};
+        if (!fmap_io::readChunkHeader(ifs, ch)) break;
+        const auto chunk_end =
+            ifs.tellg() + static_cast<std::streamoff>(ch.length);
+        if (ch.type == fmap_io::kChunkLioVoxelMap) {
+          if (voxelmap_manager->readLioChunkBody(ifs)) {
+            lio_loaded = true;
+          }
+        } else if (ch.type == fmap_io::kChunkVioFeatMap) {
+          if (img_en && vio_manager &&
+              vio_manager->readVioChunkBody(ifs)) {
+            vio_loaded = true;
+          }
+        }
+        // Skip any unread payload bytes (mismatched type, partial read, etc.)
+        ifs.seekg(chunk_end, std::ios::beg);
+      }
+    } else {
+      RCLCPP_WARN(this->node->get_logger(),
+                  "[Reloc] %s has bad global header", fmap_path.c_str());
+    }
+  }
+  if (lio_loaded) {
     RCLCPP_INFO(this->node->get_logger(),
-                "[Reloc] Loaded serialized voxel map (%s). Voxel count: %zu",
+                "[Reloc] Loaded LIO voxel map from %s. Voxel count: %zu",
                 fmap_path.c_str(), voxelmap_manager->voxel_map_.size());
   } else {
     RCLCPP_WARN(this->node->get_logger(),
-                "[Reloc] %s missing or invalid — falling back to "
+                "[Reloc] %s missing/invalid LIO chunk — falling back to "
                 "BuildVoxelMap() from cloudGlobal.pcd. Localization quality "
                 "will be lower; re-run mapping after rebuild to produce a "
                 ".fmap.",
@@ -2228,11 +2302,13 @@ void LIVMapper::loadPriorMap() {
                 prior_rgb->size());
   }
 
-  // Seed VIO feat_map so localization VIO has prior visual points to match.
-  // Prefer the RGB cloud (only points that were actually observed by the
-  // camera during mapping) over the full LIO cloud — the RGB cloud is the
-  // closest thing we have to a "visual map" without a real .vmap file.
-  if (img_en && vio_manager) {
+  // If the .fmap VIO chunk loaded above, feat_map is already populated
+  // with mapping-time reference patches and we should NOT seed from the
+  // RGB cloud (it would duplicate VPs). Otherwise (LIO-only mapping or
+  // older .fmap), fall back to seeding from the RGB cloud so VIO has at
+  // least position-only priors and bootstrap can attach first-frame
+  // patches.
+  if (img_en && vio_manager && !vio_loaded) {
     pcl::PointCloud<pcl::PointXYZRGB>::ConstPtr seed_cloud;
     if (rgb_loaded && !prior_rgb->empty()) {
       seed_cloud = prior_rgb;
@@ -2246,16 +2322,25 @@ void LIVMapper::loadPriorMap() {
       seeded = vio_manager->seedFeatMapFromCloud(
           pcl::PointCloud<PointType>::ConstPtr(fallback));
     }
-    RCLCPP_INFO(this->node->get_logger(),
-                "[Reloc] Seeded VIO feat_map with %zu prior visual points "
-                "(%zu voxels)",
+    RCLCPP_WARN(this->node->get_logger(),
+                "[Reloc] No .fmap VIO chunk — fell back to seeding %zu "
+                "visual points from prior point cloud (%zu voxels). VIO "
+                "will bootstrap reference patches from the first frame; "
+                "accuracy lower than mapping-time patches.",
                 seeded, vio_manager->feat_map.size());
+  } else if (img_en && vio_loaded) {
+    RCLCPP_INFO(this->node->get_logger(),
+                "[Reloc] VIO feat_map loaded from .fmap (%zu voxels) — "
+                "mapping-time reference patches in use; bootstrap disabled.",
+                vio_manager->feat_map.size());
   }
 }
 
 void LIVMapper::initialPoseCallback(
     const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
-  if (initial_pose_received_) return;
+  // Allow re-init at any time: clear the "already applied" gate so the main
+  // loop re-applies reloc_init_pos_/rot_ to the ESIKF state on the next tick.
+  reloc_pose_applied_ = false;
   double x = msg->pose.pose.position.x;
   double y = msg->pose.pose.position.y;
   double z = msg->pose.pose.position.z;
@@ -2286,7 +2371,10 @@ void LIVMapper::run(rclcpp::Node::SharedPtr &node) {
   // Relocalization: load prior map and set initial pose
   if (localization_mode_) {
     loadPriorMap();
-    if (!use_initial_pose_topic_ && initial_pose_config_.size() >= 6) {
+    // Always seed ESIKF state from yaml initial_pose so LIO starts immediately.
+    // If use_initial_pose_topic_ is true, a later /initialpose msg from RViz
+    // simply re-applies reloc_init_* on top — both paths coexist.
+    if (initial_pose_config_.size() >= 6) {
       double x = initial_pose_config_[0], y = initial_pose_config_[1],
              z = initial_pose_config_[2];
       double roll = initial_pose_config_[3], pitch = initial_pose_config_[4],
@@ -2309,6 +2397,14 @@ void LIVMapper::run(rclcpp::Node::SharedPtr &node) {
   while (rclcpp::ok() && !shouldShutdown()) {
     rclcpp::spin_some(this->node);
 
+    // ★ save_map srv 요청을 매 tick 최우선으로 drain. 기존엔 sync_packages 가
+    // false 반환할 때만 (즉 센서 stream 멈춰야) 저장되어서 "코드 꺼야 저장됨"
+    // 증상이 있었음. mapping 모드에서만 의미 있음 (localization 은 prior map 사용).
+    if (!localization_mode_ && save_map_requested_.load()) {
+      saveKeyFrame(save_map_name_, save_map_resolution_);
+      save_map_requested_.store(false);
+    }
+
     // Republish prior map every 2 seconds for RViz
     if (localization_mode_ && !prior_map_msg_.data.empty()) {
       auto now_t = std::chrono::steady_clock::now();
@@ -2328,10 +2424,7 @@ void LIVMapper::run(rclcpp::Node::SharedPtr &node) {
     }
 
     if (!sync_packages(LidarMeasures)) {
-      if (save_map_requested_.load()) {
-        saveKeyFrame(save_map_destination_, save_map_resolution_);
-        save_map_requested_.store(false);
-      }
+      // save 요청은 loop 최상단에서 이미 drain 됨.
       rate.sleep();
       continue;
     }
@@ -2360,10 +2453,8 @@ void LIVMapper::run(rclcpp::Node::SharedPtr &node) {
       mtx_buffer.unlock();
     }
 
-    if (!localization_mode_ && save_map_requested_.load()) {
-      saveKeyFrame();
-      save_map_requested_.store(false);
-    }
+    // save_map dead-path 제거: 인자 없는 saveKeyFrame() 은 name 비어 abort 됨.
+    // 최상단 drain 으로 통일.
   }
 
   startFlag = false;

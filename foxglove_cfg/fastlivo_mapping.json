@@ -1,0 +1,163 @@
+{
+  "configById": {
+    "3D!mapping_3d": {
+      "cameraState": {
+        "distance": 25,
+        "perspective": true,
+        "phi": 40,
+        "thetaOffset": 135,
+        "targetOffset": [0, 0, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "camera_init",
+      "scene": {
+        "enableStats": false,
+        "backgroundColor": "#000000",
+        "labelScaleFactor": 1,
+        "ignoreColladaUpAxis": false,
+        "meshUpAxis": "y_up",
+        "transforms": {
+          "showLabel": false,
+          "axisScale": 1,
+          "lineWidth": 2,
+          "lineColor": "#ffff00"
+        }
+      },
+      "transforms": {},
+      "topics": {
+        "/cloud_registered": {
+          "visible": true,
+          "colorMode": "colormap",
+          "colorField": "intensity",
+          "colorMap": "turbo",
+          "pointSize": 2,
+          "pointShape": "circle",
+          "decayTime": 0,
+          "explicitAlpha": 1
+        },
+        "/cloud_effected": {
+          "visible": false,
+          "colorMode": "flat",
+          "flatColor": "#ffffffff",
+          "pointSize": 2
+        },
+        "/cloud_voxel": {
+          "visible": false,
+          "colorMode": "colormap",
+          "colorField": "z",
+          "colorMap": "rainbow",
+          "pointSize": 2
+        },
+        "/cloud_ray_sub_map": {
+          "visible": false,
+          "colorMode": "flat",
+          "flatColor": "#ff00ffff",
+          "pointSize": 2
+        },
+        "/cloud_visual_map": {
+          "visible": false,
+          "colorMode": "rgba-fields",
+          "pointSize": 2
+        },
+        "/cloud_visual_sub_map": {
+          "visible": false,
+          "colorMode": "rgba-fields",
+          "pointSize": 2
+        },
+        "/cloud_sample_points": {
+          "visible": false,
+          "colorMode": "flat",
+          "flatColor": "#00ffffff",
+          "pointSize": 3
+        },
+        "/aft_mapped_to_init": {
+          "visible": true,
+          "type": "arrow",
+          "arrowScale": [1, 0.1, 0.1],
+          "gradient": ["#ff1900ff", "#ff1900ff"],
+          "showCovariance": false
+        },
+        "/path": {
+          "visible": true,
+          "lineWidth": 0.03,
+          "gradient": ["#00ff00ff", "#00ff00ff"]
+        },
+        "/planner_normal": {
+          "visible": true
+        },
+        "/initialpose": {
+          "visible": false
+        }
+      },
+      "layers": {
+        "grid": {
+          "layerId": "foxglove.Grid",
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "grid",
+          "color": "#248eff",
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "size": 10,
+          "divisions": 10,
+          "lineWidth": 1,
+          "order": 1
+        }
+      },
+      "publish": {
+        "type": "pose_estimate",
+        "poseTopic": "/move_base_simple/goal",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26
+      }
+    },
+    "Image!mapping_img": {
+      "cameraState": {},
+      "followTf": "",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "imageMode": {
+        "imageTopic": "/image_raw/compressed",
+        "synchronize": false
+      }
+    },
+    "Image!mapping_rgb": {
+      "cameraState": {},
+      "followTf": "",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "imageMode": {
+        "imageTopic": "/rgb_img",
+        "synchronize": false
+      }
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "first": "3D!mapping_3d",
+    "second": {
+      "first": "Image!mapping_img",
+      "second": "Image!mapping_rgb",
+      "direction": "column",
+      "splitPercentage": 50
+    },
+    "direction": "row",
+    "splitPercentage": 65
+  }
+}
