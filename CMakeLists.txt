@@ -187,8 +187,8 @@ target_link_libraries(laser_mapping
     lio
     imu_proc
     utils
-    ${CMAKE_SOURCE_DIR}/../../install/vikit_common/lib/libvikit_common${CMAKE_SHARED_LIBRARY_SUFFIX}
-    ${CMAKE_SOURCE_DIR}/../../install/vikit_ros/lib/libvikit_ros${CMAKE_SHARED_LIBRARY_SUFFIX}
+    /Users/mini/ros2_ws/install/vikit_common/lib/libvikit_common${CMAKE_SHARED_LIBRARY_SUFFIX}
+    /Users/mini/ros2_ws/install/vikit_ros/lib/libvikit_ros${CMAKE_SHARED_LIBRARY_SUFFIX}
     ${COMMON_DEPENDENCIES}
 )
 
