@@ -17,7 +17,7 @@ from launch_ros.actions import Node
 
 
 # fast_livo2/map/ 절대경로. middle_level_mac 과 동일.
-MAPS_ROOT = "/Users/mini/ros2_ws/src/fast_livo2/map"
+MAPS_ROOT = "/Users/mini/ros2_ws/src/IFAC2026_SH/src/slam/fast_livo2/map"
 
 
 def launch_setup(context, *args, **kwargs):

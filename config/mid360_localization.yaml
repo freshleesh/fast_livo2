@@ -7,7 +7,7 @@
       img_en: 0   # LIVO localization mode
       lidar_en: 1
       ros_driver_bug_fix: false
-      map_save_path: "/Users/mini/ros2_ws/src/fast_livo2/map/"
+      map_save_path: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/slam/fast_livo2/map/"
       enable_zupt: false
       zupt_noise: 0.05
       zupt_interval: 5
@@ -125,6 +125,6 @@
     # ==================== Relocalization parameters ====================
     relocalization:
       enabled: true
-      prior_map_dir: "/Users/mini/ros2_ws/src/fast_livo2/map/hall_0521_1"
+      prior_map_dir: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/slam/fast_livo2/map/hall_0521_1"
       initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # x, y, z, roll, pitch, yaw
       use_initial_pose_topic: true

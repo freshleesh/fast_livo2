@@ -7,7 +7,7 @@
       img_en: 1   # LIO-only mapping: VIO crashes on macOS arm64 (libvio SIGBUS in updateState OMP region)
       lidar_en: 1
       ros_driver_bug_fix: false
-      map_save_path: "/Users/mini/ros2_ws/src/fast_livo2/map/"
+      map_save_path: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/slam/fast_livo2/map/"
       enable_zupt: true
       zupt_noise: 0.05
       zupt_interval: 5
