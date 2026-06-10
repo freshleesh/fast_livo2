@@ -153,6 +153,11 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
   try_declare.template operator()<bool>("wheel.enable_wheel_odom", false);
   // est_wheel_extrinsic
   try_declare.template operator()<bool>("wheel.est_wheel_extrinsic", false);
+  // odom_topic — vesc_to_odom_node publishes "/odom" by default
+  try_declare.template operator()<std::string>("wheel.odom_topic", "/odom");
+  // vel_sign — VESC ERPM polarity depends on motor wiring. -1.0 when wheel
+  // reports -v while driving forward (diagnosed via REJECT |r| ≈ 2×speed).
+  try_declare.template operator()<double>("wheel.vel_sign", 1.0);
 
   try_declare.template operator()<bool>("vio.normal_en", true);
   try_declare.template operator()<bool>("vio.inverse_composition_en", false);
@@ -263,6 +268,8 @@ void LIVMapper::readParameters(rclcpp::Node::SharedPtr &node) {
   this->node->get_parameter("wheel.enable_wheel_odom", enable_wheel_odom);
   // est_wheel_extrinsic
   this->node->get_parameter("wheel.est_wheel_extrinsic", est_wheel_extrinsic);
+  this->node->get_parameter("wheel.odom_topic", wheel_odom_topic_);
+  this->node->get_parameter("wheel.vel_sign", wheel_vel_sign_);
   this->node->get_parameter("vio.normal_en", normal_en);
   this->node->get_parameter("vio.inverse_composition_en",
                             inverse_composition_en);
@@ -510,7 +517,7 @@ void LIVMapper::initializeSubscribersAndPublishers(
       img_topic, qos_img,
       std::bind(&LIVMapper::img_cbk, this, std::placeholders::_1), imgOpt);
   subOdom = this->node->create_subscription<nav_msgs::msg::Odometry>(
-      "/robot_odom", qos_imu,
+      wheel_odom_topic_, qos_imu,
       std::bind(&LIVMapper::odometryHandler, this, std::placeholders::_1));
   if (localization_mode_ && use_initial_pose_topic_) {
     sub_initial_pose_ = this->node->create_subscription<
@@ -1573,6 +1580,7 @@ bool LIVMapper::handleLIO() {
 
   if (localization_mode_) {
     V3D pre_pos = _state.pos_end;
+    Eigen::Vector3d pre_rpy = RotMtoEuler(_state.rot_end);  // pre-LIO orientation for dyaw
 
     // Use more iterations for localization (prior map matching needs
     // more iterations than incremental SLAM to converge)
@@ -1588,21 +1596,33 @@ bool LIVMapper::handleLIO() {
     _state.gravity = V3D(0, 0, -G_m_s2);
     _state.cov.block<3, 3>(16, 16) = M3D::Identity() * 1e-6;
 
-    // One compact diagnostic line per scan. Fields needed to debug
-    // high-speed "shoot to sky" failure:
-    //   z         — current world Z (the symptom)
+    // One compact diagnostic line per scan. Translation fields:
+    //   z         — current world Z (sky-soar symptom)
     //   vz        — vertical velocity (the integrator)
     //   |dz|      — Z correction LiDAR applied this scan
     //   rp        — roll/pitch deg (gravity-projection error driver)
-    //   baz       — accel bias Z (absorbs gravity miscompensation)
+    //   baz       — accel bias Z (absorbs gravity miscompensation; frozen)
+    // Rotation fields (Step 2 — diagnose rotation case):
+    //   yaw       — current world yaw (deg)
+    //   wz        — current angular velocity Z (rad/s) — how fast we're spinning
+    //   bgz       — gyro bias Z (rad/s) — should drift slowly; jumps = residual sink
+    //   dyaw      — yaw correction LiDAR applied this scan (deg) — wrap-safe
     //   eff       — effective LiDAR-plane matches (drops -> IMU dominates)
     Eigen::Vector3d rpy = RotMtoEuler(_state.rot_end) * 57.3;
+    double dyaw_rad = rpy[2] / 57.3 - pre_rpy[2];
+    while (dyaw_rad > M_PI) dyaw_rad -= 2.0 * M_PI;
+    while (dyaw_rad < -M_PI) dyaw_rad += 2.0 * M_PI;
+    double dyaw_deg = dyaw_rad * 57.3;
     std::cout << std::fixed << std::setprecision(3)
               << "[Reloc] z=" << _state.pos_end[2]
               << " vz=" << _state.vel_end[2]
               << " |dz|=" << std::fabs(delta[2])
               << " |d|=" << delta.norm()
               << " rp=" << rpy[0] << "," << rpy[1]
+              << " yaw=" << rpy[2]
+              << " wz=" << _state.ang_vel_end[2]
+              << " bgz=" << _state.bias_g[2]
+              << " dyaw=" << dyaw_deg
               << " baz=" << _state.bias_a[2]
               << " eff=" << voxelmap_manager->effct_feat_num_
               << std::endl;
@@ -2438,21 +2458,26 @@ void LIVMapper::extractWheelVel(LidarMeasureGroup &meas) {
   // double start_time = meas.lidar_frame_beg_time;
   double start_time = meas.last_lio_update_time;
   static double first_time = start_time;
-  // std::cout << "processRobotOdometry: lidar_end_time: " << start_time
-  //           << std::endl;
-  std::cout << std::fixed << std::setprecision(19)
-            << "extractWheelVel: lidar_start_time: " << start_time << std::endl;
   while (!odomQueue.empty()) {
-    if (stamp2Sec(odomQueue.front().header.stamp) < start_time - 0.01)
+    // -0.05 (was -0.01): with 50 Hz odom (20 ms spacing) the 10 ms window
+    // dropped every message half the time -> "stream active/lost" flicker
+    // and only ~50% of scans got a wheel update.
+    if (stamp2Sec(odomQueue.front().header.stamp) < start_time - 0.05)
       odomQueue.pop_front();
     else
       break;
   }
   // copy odomQueue to localOdomQueue for processing
   std::deque<nav_msgs::msg::Odometry> localOdomQueue = odomQueue;
-  odoLock.unlock();
+  // Unlock via the unique_lock — raw odoLock.unlock() double-unlocked (lock2's
+  // destructor unlocked again) = UB. Harmless while /odom had no publisher,
+  // but with 50 Hz odometryHandler contention it corrupted the mutex and
+  // deadlocked the main loop ("IMU and LiDAR not synced" symptom).
+  lock2.unlock();
   if (localOdomQueue.empty()) {
-    std::cout << "extractWheelVel: odomQueue is empty" << std::endl;
+    // Log state transitions only — "empty every scan" was pure spam.
+    if (wheel_odom_updated_)
+      std::cout << "[Wheel] odom stream lost (queue empty)" << std::endl;
     wheel_odom_updated_ = false;
     return;
   }
@@ -2467,15 +2492,14 @@ void LIVMapper::extractWheelVel(LidarMeasureGroup &meas) {
       break;
   }
 
-  wheel_linear_velocity_[0] = startOdomMsg.twist.twist.linear.x;
-  wheel_linear_velocity_[1] = startOdomMsg.twist.twist.linear.y;
-  wheel_linear_velocity_[2] = startOdomMsg.twist.twist.linear.z;
+  wheel_linear_velocity_[0] = wheel_vel_sign_ * startOdomMsg.twist.twist.linear.x;
+  wheel_linear_velocity_[1] = wheel_vel_sign_ * startOdomMsg.twist.twist.linear.y;
+  wheel_linear_velocity_[2] = wheel_vel_sign_ * startOdomMsg.twist.twist.linear.z;
   if(abs(wheel_linear_velocity_[2])<0.200) wheel_linear_velocity_[2] = 0.0;
+  if (!wheel_odom_updated_)
+    std::cout << "[Wheel] odom stream active, v="
+              << wheel_linear_velocity_.transpose() << std::endl;
   wheel_odom_updated_ = true;
-  std::cout << "current wheel vel time: "
-            << stamp2Sec(startOdomMsg.header.stamp) << std::endl;
-  std::cout << "wheel linear velocity: " << wheel_linear_velocity_.transpose()
-            << std::endl;
 }
 
 void LIVMapper::processRobotOdometry(LidarMeasureGroup &meas) {
@@ -2501,7 +2525,7 @@ void LIVMapper::processRobotOdometry(LidarMeasureGroup &meas) {
   }
   // copy odomQueue to localOdomQueue for processing
   std::deque<nav_msgs::msg::Odometry> localOdomQueue = odomQueue;
-  odoLock.unlock();
+  lock2.unlock();  // same double-unlock bug as extractWheelVel
   if (localOdomQueue.empty()) {
     std::cout << "processRobotOdometry: odomQueue is empty" << std::endl;
     return;

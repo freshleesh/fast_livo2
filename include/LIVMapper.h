@@ -165,6 +165,8 @@ class LIVMapper {
   bool enable_zupt = true;
   bool enable_wheel_odom = true;
   bool est_wheel_extrinsic = false;
+  string wheel_odom_topic_ = "/odom";
+  double wheel_vel_sign_ = 1.0;
   double zupt_noise = 0.1;
   int zupt_interval = 10;
   V3D extT;

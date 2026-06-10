@@ -23,13 +23,25 @@
       Pcl: [0.0119364, -0.060614, -0.0652314]
 
     wheel:
-      enable_wheel_odom: false
-      est_wheel_extrinsic: false
-      R_wheel_to_imu: [0.9991943951, 0.0,          -0.0401317925,
-                       0.0,          -1.0,          0.0,
-                       0.0401317925, 0.0,          -0.9991943951]
-      p_wheel_to_imu: [0.0001, 0.00001, 0.40618]
-      wheel_mea_cov:  [0.005, 0.01, 0.01]
+      enable_wheel_odom: true
+      est_wheel_extrinsic: false   # set true ONLY for slow figure-8 calibration runs
+      odom_topic: "/odom"   # vesc_to_odom_node output (twist = wheel-frame velocity)
+      vel_sign: -1.0   # VESC reports -v when driving forward (REJECT |r|≈2×speed diagnosis).
+                       # Set back to 1.0 if vesc_to_odom.cpp negation is fixed at the driver.
+      # R_ex from IMU-init gravity (2.4572, 0.3217, -9.4918): minimal rotation
+      # car(z-up, x-fwd) -> IMU. Mount tilt rpy ≈ (1.94, -14.51, 0)°, yaw=0 assumed.
+      # Old value (pitch 2.3° + y/z flip) was from a previous mount — replaced.
+      R_wheel_to_imu: [ 0.9681128, -0.0041747, -0.2504798,
+                       -0.0041747,  0.9994534, -0.0327932,
+                        0.2504798,  0.0327932,  0.9675663]
+      # p_ex = R_ex @ (IMU->rear-axle in car frame).
+      # Measured: rear axle is 28 cm behind, 7.5 cm below IMU (car frame: x-fwd, y-left, z-up).
+      # car-frame vector = (-0.28, 0, -0.075) → IMU-frame after R_ex.
+      p_wheel_to_imu: [-0.25229, 0.00363, -0.14270]
+      # x: forward speed from ERPM — trustworthy (when not slipping; gate handles slip).
+      # y/z: vesc_to_odom hardcodes vy=vz=0 ("no slip" claim) which is FALSE during
+      # cornering — keep nearly uninformative so lateral slip doesn't fight LiDAR.
+      wheel_mea_cov:  [0.005, 1.0, 1.0]
 
     time_offset:
       imu_time_offset: 0.0
@@ -38,8 +50,8 @@
       lidar_time_offset: 0.0
 
     preprocess:
-      point_filter_num: 2   # 2 for relocalization
-      filter_size_surf: 0.10
+      point_filter_num: 1   # 2 for relocalization
+      filter_size_surf: 0.05
       lidar_type: 7
       scan_line: 6
       blind: 0.1
@@ -63,16 +75,16 @@
     imu:
       imu_en: true
       imu_int_frame: 400 
-      acc_cov: 2.0   # was 0.2 — distrust IMU more so LiDAR has more authority (Step 1 diagnostic)
+      acc_cov: 5.0   # was 2.0 → 5.0 (Step 2: suppress centripetal accel leaking into vz during fast turns)
       gyr_cov: 1.0   # was 0.5 — same reason
       b_acc_cov: 0.001
       b_gyr_cov: 0.001
 
     lio:
-      max_iterations: 3
+      max_iterations: 10   # was 3 (Step 2: more ESIKF iters for rotation convergence)
       dept_err: 0.02
       beam_err: 0.05
-      min_eigen_value: 0.005
+      min_eigen_value: 0.003
       voxel_size: 0.25
       max_layer: 2
       max_points_num: 50

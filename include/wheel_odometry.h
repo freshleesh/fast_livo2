@@ -75,13 +75,27 @@ class WheelOdometryConstraint {
       const Eigen::Vector3d v_pred_wheel = R_ex_.transpose() * a;
       r = vel_wheel - v_pred_wheel;  // r = z - h(x)
 
+      // Absolute residual gate on the FORWARD component only. The Mahalanobis
+      // gate below self-defeats once the filter degrades (P grows -> S grows ->
+      // garbage maha looks small): a 22 m/s residual passed with scale=2.7 and
+      // destroyed the state. Gating on |r| rejected every corner because the
+      // wheel's vy=0 claim is false under lateral slip — that mismatch is
+      // handled by the large y/z measurement cov instead. |r_x| catches the
+      // genuinely fatal case: wheels spinning (forward slip).
+      if (it == 0 && std::fabs(r.x()) > abs_residual_gate_) {
+        std::cout << std::fixed << std::setprecision(3)
+                  << "[Wheel] joint REJECT rx=" << r.x() << std::endl;
+        return;
+      }
+
       // 右扰动雅可比（H = ∂h/∂[x; extr]）
       H.setZero();
       // 整机状态块
       H.block<3, 3>(0, 0) = R_ex_.transpose() * skew(v_imu);  // ∂h/∂δθ_WI
       // 位置不观测 -> 0
       H.block<3, 3>(0, 7) = R_ex_.transpose() * R_WI.transpose();  // ∂h/∂v_W
-      H.block<3, 3>(0, 10) = R_ex_.transpose() * skew(p_ex_);      // ∂h/∂b_g
+      // bias_g block removed: lever-arm coupling let bad residuals drag
+      // bias_g to physically impossible values (-20 rad/s in logs).
       // 外参块：将其放在增广状态末尾
       // 外参旋转（右扰动）：∂h/∂δθ_ex = skew(v_pred_wheel)
       H.block<3, 3>(0, NX + 0) = skew(v_pred_wheel);
@@ -99,9 +113,6 @@ class WheelOdometryConstraint {
       }
       Eigen::Matrix3d R_meas = scale * wheel_meas_cov;
       R_scale_last = scale;
-      std::cout << "[Wheel Odom] maha: " << maha << ", scale: " << scale
-                << std::endl;
-      std::cout << "[Wheel Odom] R_meas: " << R_meas << std::endl;
       // 创新协方差与增益（轮系噪声）
       // 5) Gain with prior covariance (IEKF)
       Eigen::Matrix3d S = H * P_aug * H.transpose() + R_meas;
@@ -127,13 +138,7 @@ class WheelOdometryConstraint {
       // state.vel_end += dvel;
       // state.bias_g += dbg;
       state += dx.block<DIM_STATE, 1>(0, 0);
-      std::cout << "[Wheel Odom] Iter " << it << " Residual: " << r.transpose()
-                << std::endl;
-      std::cout << "[Wheel Odom] dpos: " << dpos.transpose() << std::endl
-                << "[Wheel Odom] dvel: " << dvel.transpose() << std::endl
-                << "[Wheel Odom] dbg: " << dbg.transpose() << std::endl;
-      std::cout << "[Wheel Odom] drex: " << drex.transpose() << std::endl
-                << "[Wheel Odom] dpex: " << dpex.transpose() << std::endl;
+      (void)dtheta; (void)dpos; (void)dbg; (void)dba; (void)dg;
 
       // 外参（右扰动）
       R_ex_ = R_ex_ * Exp(drex(0), drex(1), drex(2));
@@ -141,6 +146,15 @@ class WheelOdometryConstraint {
 
       if (dvel.norm() < eps_dx) break;
     }
+    // One-line diagnostic: final residual + adaptive-R scale + extrinsic
+    // convergence (calibration runs watch ex_rpy/p_ex settle).
+    Eigen::Vector3d ex_rpy =
+        R_ex_.eulerAngles(2, 1, 0).reverse() * 57.2958;
+    std::cout << std::fixed << std::setprecision(3)
+              << "[Wheel] joint r=" << r.transpose()
+              << " Rscale=" << R_scale_last
+              << " ex_rpy=" << ex_rpy.transpose()
+              << " p_ex=" << p_ex_.transpose() << std::endl;
 
     // 末次线性化 + Joseph 协方差
     {
@@ -152,7 +166,7 @@ class WheelOdometryConstraint {
       H.setZero();
       H.block<3, 3>(0, 0) = R_ex_.transpose() * skew(v_imu);       // ∂h/∂δθ_WI
       H.block<3, 3>(0, 7) = R_ex_.transpose() * R_WI.transpose();  // ∂h/∂v_W
-      H.block<3, 3>(0, 10) = R_ex_.transpose() * skew(p_ex_);      // ∂h/∂b_g
+      // bias_g block removed (see iteration H above)
       H.block<3, 3>(0, NX + 0) = skew(v_pred_wheel);
       H.block<3, 3>(0, NX + 3) = R_ex_.transpose() * skew(omega_I);
       // 使用最终的自适应R
@@ -171,8 +185,6 @@ class WheelOdometryConstraint {
       state.cov = P_post.block(0, 0, NX, NX);
       P_x_ext_ = P_post.block(0, NX, NX, NE);
       P_ext_ext = P_post.block(NX, NX, NE, NE);
-      std::cout << "[Wheel Odom] Post Extrinsic Cov: " << P_ext_ext
-                << std::endl;
     }
   }
 
@@ -200,13 +212,16 @@ class WheelOdometryConstraint {
       Eigen::Vector3d v_imu = R_WI.transpose() * state.vel_end;
       Eigen::Vector3d v_pred_wheel =
           R_ex_.transpose() * (v_imu + skew(omega_I) * p_ex_);
-      std::cout << "[Wheel Odom] Iter " << it << " v_imu: " << v_imu.transpose()
-                << std::endl
-                << "v_pred_wheel: " << v_pred_wheel.transpose() << std::endl;
 
       // 3) Residual
       r = vel_wheel - v_pred_wheel;
-      std::cout << "Residual: " << r.transpose() << std::endl;
+
+      // Forward-component gate (see update_state_joint for rationale).
+      if (it == 0 && std::fabs(r.x()) > abs_residual_gate_) {
+        std::cout << std::fixed << std::setprecision(3)
+                  << "[Wheel] REJECT rx=" << r.x() << std::endl;
+        return;
+      }
 
       // 4) Jacobian
       H.setZero();
@@ -214,7 +229,7 @@ class WheelOdometryConstraint {
           R_ex_.transpose() * skew(v_imu);  // d wrt IMU rotation
       H.block<3, 3>(0, 7) =
           R_ex_.transpose() * R_WI.transpose();  // d wrt world velocity
-      H.block<3, 3>(0, 10) = R_ex_.transpose() * skew(p_ex_);  // d wrt gyro
+      // bias_g block removed (residual sink, see update_state_joint)
 
       // 4.1) 基于马氏距离的自适应R（局部R_meas，不改成员wheel_meas_cov）
       Eigen::Matrix3d S0 = H * P_prior * H.transpose() + wheel_meas_cov;
@@ -228,9 +243,6 @@ class WheelOdometryConstraint {
       }
       Eigen::Matrix3d R_meas = scale * wheel_meas_cov;
       R_scale_last = scale;
-      std::cout << "[Wheel Odom] maha: " << maha << ", scale: " << scale
-                << std::endl;
-      std::cout << "[Wheel Odom] R_meas: " << R_meas << std::endl;
       // 5) Gain with prior covariance (IEKF)
       Eigen::Matrix3d S = H * P_prior * H.transpose() + R_meas;
       Eigen::Matrix<double, DIM_STATE, 3> K =
@@ -242,6 +254,11 @@ class WheelOdometryConstraint {
       state += solution;
       if (vel_add.norm() < eps_dx) break;
     }
+    // One-line diagnostic: final residual + adaptive-R scale
+    // (Rscale > 1 → measurement was Mahalanobis-gated, e.g. wheel slip).
+    std::cout << std::fixed << std::setprecision(3)
+              << "[Wheel] r=" << r.transpose()
+              << " Rscale=" << R_scale_last << std::endl;
 
     // Covariance update (Joseph form) using final linearization
     {
@@ -251,7 +268,7 @@ class WheelOdometryConstraint {
       H.setZero();
       H.block<3, 3>(0, 0) = R_ex_.transpose() * skew(v_imu);
       H.block<3, 3>(0, 7) = R_ex_.transpose() * R_WI.transpose();
-      H.block<3, 3>(0, 10) = R_ex_.transpose() * skew(p_ex_);
+      // bias_g block removed (residual sink)
       // 使用最终的自适应R
       Eigen::Matrix3d R_meas = R_scale_last * wheel_meas_cov;
 
@@ -349,6 +366,9 @@ class WheelOdometryConstraint {
   }
 
  private:
+  // Hard outlier gate [m/s]: wheel slip / sign errors / sensor glitches are
+  // rejected outright instead of being "scaled" into the filter.
+  static constexpr double abs_residual_gate_ = 1.5;
   Eigen::Matrix3d wheel_meas_cov, wheel_cov_world;  // 外参
   Eigen::Matrix3d R_ex_ = Eigen::Matrix3d::Identity();
   Eigen::Vector3d p_ex_ = Eigen::Vector3d::Zero();
