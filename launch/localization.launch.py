@@ -18,7 +18,10 @@ from launch_ros.actions import Node
 
 # Canonical map storage: stack_master/maps/<name>/ (src side — fast_livo
 # 가 SaveMap 으로 새 파일 쓰는 곳과 동일).
-MAPS_ROOT = "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps"
+# 머신마다 다르면 FASTLIVO_MAPS_ROOT 환경변수로 덮어쓴다 (기본값 = 실차 mac).
+MAPS_ROOT = os.environ.get(
+    "FASTLIVO_MAPS_ROOT",
+    "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps")
 
 
 def launch_setup(context, *args, **kwargs):
@@ -30,18 +33,25 @@ def launch_setup(context, *args, **kwargs):
     main_params = os.path.join(config_dir, "mid360_localization.yaml")
     camera_params = os.path.join(config_dir, "camera_see3cam.yaml")
 
+    # 머신별 오버라이드 (git 미추적, repo 밖). 경로·img_en 등 머신마다 다른
+    # 값은 base yaml이 아니라 여기에 둔다. 템플릿: config/local.yaml.example
+    params = [main_params, camera_params]
+    local_params = os.path.expanduser("~/.config/fast_livo/local.yaml")
+    if os.path.exists(local_params):
+        params.append(local_params)
+
     map_name = LaunchConfiguration("map").perform(context)
 
-    extra_params = []
+    # map:= 인자는 local.yaml보다 우선 (마지막에 얹음)
     if map_name:
         prior_map_dir = os.path.join(MAPS_ROOT, map_name)
-        extra_params.append({"relocalization.prior_map_dir": prior_map_dir})
+        params.append({"relocalization.prior_map_dir": prior_map_dir})
 
     reloc_node = Node(
         package="fast_livo",
         executable="fastlivo_mapping",
         name="laserMapping",
-        parameters=[main_params, camera_params, *extra_params],
+        parameters=params,
         output="screen",
     )
 

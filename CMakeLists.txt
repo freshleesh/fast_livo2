@@ -188,7 +188,16 @@ ament_target_dependencies(laser_mapping ${dependencies})
 ament_target_dependencies(incremental_mapping ${dependencies})
 ament_target_dependencies(pose_estimator ${dependencies})
 # linking libraries or executables to public dependencies
-# Use platform-independent suffix (macOS: .dylib, Linux: .so)
+# macOS builds vikit with plain cmake (conda include propagation issue), so
+# find_package exports no libs there — link the install tree directly.
+if(APPLE)
+  set(VIKIT_LINK_LIBS
+      $ENV{HOME}/ros2_ws/install/vikit_common/lib/libvikit_common${CMAKE_SHARED_LIBRARY_SUFFIX}
+      $ENV{HOME}/ros2_ws/install/vikit_ros/lib/libvikit_ros${CMAKE_SHARED_LIBRARY_SUFFIX})
+else()
+  set(VIKIT_LINK_LIBS ${vikit_common_LIBRARIES} ${vikit_ros_LIBRARIES})
+endif()
+
 target_link_libraries(laser_mapping
     pre
     vio
@@ -197,8 +206,7 @@ target_link_libraries(laser_mapping
     utils
     gtsam
     ${PCL_LIBRARIES}
-    ${vikit_common_LIBRARIES}
-    ${vikit_ros_LIBRARIES}
+    ${VIKIT_LINK_LIBS}
     ${COMMON_DEPENDENCIES}
 )
 

@@ -124,6 +124,11 @@ There are exactly two YAML pairs in [config/](config/):
 
 Both main YAMLs cover `common`, `extrin_calib`, `preprocess`, `vio`, `imu`, `lio`, `pgo`, `localization` sections.
 
+**Per-machine overrides** (this repo is shared between the race car mac and a Linux dev laptop):
+- Base YAMLs hold **car (mac) values only**. Never commit machine-specific paths or `img_en` flips to them — that causes pull conflicts between machines.
+- Machine-specific values go in `~/.config/fast_livo/local.yaml` (untracked, outside the repo); both launches overlay it automatically when present. Template: [config/local.yaml.example](config/local.yaml.example).
+- `localization.launch.py`'s `map:=` root can be overridden per machine with the `FASTLIVO_MAPS_ROOT` env var (default = car mac path).
+
 Key extrinsics:
 - `extrinsic_T/R`: IMU-to-LiDAR
 - `Rcl/Pcl`: LiDAR-to-Camera (rotation matrix + translation)
