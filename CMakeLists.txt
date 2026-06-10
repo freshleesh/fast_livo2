@@ -157,6 +157,14 @@ set(dependencies
 
 set(COMMON_DEPENDENCIES OpenMP::OpenMP_CXX)
 
+# Strip -Wl,--no-undefined (injected by some find_package modules above) so the
+# intermediate shared libs may leave inter-library symbols unresolved, deferring
+# them to the final executable link. Upstream relies on this (macOS uses
+# -undefined dynamic_lookup); without it Linux fails to link libvio/liblaser_mapping.
+# Placed AFTER all find_package() calls so nothing re-adds the flag.
+string(REPLACE "-Wl,--no-undefined" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
+string(REPLACE "-Wl,--no-undefined" "" CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
+
 # link_directories(${COMMON_DEPENDENCIES}
 #   ${vikit_common_LIBRARIES}/libvikit_common.so
 #   ${vikit_ros_LIBRARIES}/libvikit_ros.so
@@ -187,8 +195,10 @@ target_link_libraries(laser_mapping
     lio
     imu_proc
     utils
-    /Users/mini/ros2_ws/install/vikit_common/lib/libvikit_common${CMAKE_SHARED_LIBRARY_SUFFIX}
-    /Users/mini/ros2_ws/install/vikit_ros/lib/libvikit_ros${CMAKE_SHARED_LIBRARY_SUFFIX}
+    gtsam
+    ${PCL_LIBRARIES}
+    ${vikit_common_LIBRARIES}
+    ${vikit_ros_LIBRARIES}
     ${COMMON_DEPENDENCIES}
 )
 
@@ -197,6 +207,8 @@ target_link_libraries(vio ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
 target_link_libraries(lio utils ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
 target_link_libraries(pre ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
 target_link_libraries(imu_proc ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
+target_link_libraries(incremental_mapping gtsam ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} "${cpp_typesupport_target}")
+target_link_libraries(pose_estimator incremental_mapping gtsam ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${OpenCV_LIBRARIES} "${cpp_typesupport_target}")
 
 # macOS: dylibs must resolve all symbols at link time (unlike Linux .so).
 # Strategy: give intermediate libs -undefined dynamic_lookup so they can leave
