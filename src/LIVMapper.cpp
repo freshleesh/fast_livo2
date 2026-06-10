@@ -700,7 +700,7 @@ void LIVMapper::processImu() {
       _state.cov(6, 6) = (exposure_estimate_en && img_en) ? inv_expo_cov : 0.0001;
       _state.cov.block<3, 3>(7, 7) = M3D::Identity() * 0.1;    // vel: moderate (was 10.0 → oscillation)
       _state.cov.block<3, 3>(10, 10) = M3D::Identity() * 0.01; // bias_g
-      _state.cov.block<3, 3>(13, 13) = M3D::Identity() * 0.1;  // bias_a
+      _state.cov.block<3, 3>(13, 13) = M3D::Identity() * 1e-6; // bias_a frozen (diagnostic: stop residual sink)
       _state.cov.block<3, 3>(16, 16) = M3D::Identity() * 1e-6;  // gravity: fixed in localization
       reloc_pose_applied_ = true;
       RCLCPP_INFO(this->node->get_logger(),
@@ -759,8 +759,7 @@ void LIVMapper::handleVIO() {
     return;
   }
 
-  std::cout << "[ VIO ] Raw feature num: " << pcl_w_wait_pub->points.size()
-            << std::endl;
+  // [ VIO ] raw feature num log suppressed.
 
   if (fabs((LidarMeasures.last_lio_update_time - _first_lidar_time) -
            plot_time) < (frame_cnt / 2 * 0.1)) {
@@ -1574,9 +1573,6 @@ bool LIVMapper::handleLIO() {
 
   if (localization_mode_) {
     V3D pre_pos = _state.pos_end;
-    V3D pre_vel = _state.vel_end;
-    V3D pre_grav = _state.gravity;
-    Eigen::Vector3d pre_rpy = RotMtoEuler(_state.rot_end);
 
     // Use more iterations for localization (prior map matching needs
     // more iterations than incremental SLAM to converge)
@@ -1586,23 +1582,29 @@ bool LIVMapper::handleLIO() {
     voxelmap_manager->config_setting_.max_iterations_ = orig_iters;
     _state = voxelmap_manager->state_;
 
-    V3D post_pos = _state.pos_end;
-    V3D delta = post_pos - pre_pos;
+    V3D delta = _state.pos_end - pre_pos;
 
     // Clamp gravity to fixed value (prevent drift via covariance coupling)
     _state.gravity = V3D(0, 0, -G_m_s2);
     _state.cov.block<3, 3>(16, 16) = M3D::Identity() * 1e-6;
 
-    std::cout << std::fixed << std::setprecision(4)
-              << "[Reloc] PRE  pos: " << pre_pos.transpose()
-              << " vel: " << pre_vel.transpose()
-              << " grav: " << pre_grav.transpose()
-              << " rpy: " << (pre_rpy * 57.3).transpose() << std::endl;
-    std::cout << std::fixed << std::setprecision(4)
-              << "[Reloc] POST pos: " << post_pos.transpose()
-              << " delta: " << delta.transpose()
-              << " |delta|: " << delta.norm()
-              << " eff_feat: " << voxelmap_manager->effct_feat_num_
+    // One compact diagnostic line per scan. Fields needed to debug
+    // high-speed "shoot to sky" failure:
+    //   z         — current world Z (the symptom)
+    //   vz        — vertical velocity (the integrator)
+    //   |dz|      — Z correction LiDAR applied this scan
+    //   rp        — roll/pitch deg (gravity-projection error driver)
+    //   baz       — accel bias Z (absorbs gravity miscompensation)
+    //   eff       — effective LiDAR-plane matches (drops -> IMU dominates)
+    Eigen::Vector3d rpy = RotMtoEuler(_state.rot_end) * 57.3;
+    std::cout << std::fixed << std::setprecision(3)
+              << "[Reloc] z=" << _state.pos_end[2]
+              << " vz=" << _state.vel_end[2]
+              << " |dz|=" << std::fabs(delta[2])
+              << " |d|=" << delta.norm()
+              << " rp=" << rpy[0] << "," << rpy[1]
+              << " baz=" << _state.bias_a[2]
+              << " eff=" << voxelmap_manager->effct_feat_num_
               << std::endl;
   } else {
     voxelmap_manager->StateEstimation(state_propagat);
@@ -1735,15 +1737,13 @@ bool LIVMapper::handleLIO() {
 
     if (best_diff > 0.1) {
       // Time gap too large, skip VIO and drain old images
-      std::cout << "[VIO Sync] SKIP: best_diff=" << best_diff << "s > 0.1s threshold" << std::endl;
+      // [VIO Sync] skip log suppressed.
       while (!img_time_buffer.empty() && img_time_buffer.front() < lio_time - 0.1) {
         img_buffer.pop_front();
         img_time_buffer.pop_front();
       }
     } else {
-      std::cout << "[VIO Sync] lio_time=" << std::fixed << std::setprecision(3)
-                << lio_time << " img_time=" << img_time_buffer[best_idx]
-                << " diff=" << best_diff << "s buf_size=" << img_buffer.size() << std::endl;
+      // [VIO Sync] match log suppressed.
 
       cv::Mat vio_img = img_buffer[best_idx];
       double vio_time = img_time_buffer[best_idx];
@@ -1798,33 +1798,10 @@ bool LIVMapper::handleLIO() {
   //         "\033[1;36m[ LIO mapping time ]: average: icp: %0.6f secs, map
   //         incre: %0.6f secs, total: %0.6f secs.\033[0m\n", t2 - t1, t4 -
   //         t3, t4 - t0, aver_time_icp, aver_time_map_inre, aver_time_consu);
-  printf(
-      "\033[1;34m+-----------------------------------------------------------"
-      "--"
-      "+\033[0m\n");
-  printf(
-      "\033[1;34m|                         LIO Mapping Time                  "
-      "  "
-      "|\033[0m\n");
-  printf(
-      "\033[1;34m+-----------------------------------------------------------"
-      "--"
-      "+\033[0m\n");
-  printf("\033[1;34m| %-29s | %-27s |\033[0m\n", "Algorithm Stage",
-         "Time (secs)");
-  printf(
-      "\033[1;34m+-----------------------------------------------------------"
-      "--"
-      "+\033[0m\n");
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "DownSample", t_down - t0);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "ICP", t2 - t1);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "updateVoxelMap", t4 - t3);
-  printf(
-      "\033[1;34m+-----------------------------------------------------------"
-      "--"
-      "+\033[0m\n");
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Ground Detection", g1 - g0);
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Current Total Time", t4 - t0);
+  // LIO Mapping Time table suppressed for readable diagnostic logs.
+  // Reenable by uncommenting if profiling is needed.
+  (void)t_down; (void)t0; (void)t1; (void)t2; (void)t3; (void)t4;
+  (void)g0; (void)g1;
   // // save t4-t0 to /Log/time.txt
   // std::ofstream fout_time;
   // fout_time.open(std::string(ROOT_DIR) + "Log/result/lio_time.txt",
@@ -1833,12 +1810,7 @@ bool LIVMapper::handleLIO() {
   //   RCLCPP_ERROR(this->node->get_logger(), "open fail\n");
   // fout_time << std::fixed << std::setprecision(6) << t4 - t0 << std::endl;
 
-  printf("\033[1;36m| %-29s | %-27f |\033[0m\n", "Average Total Time",
-         aver_time_consu);
-  printf(
-      "\033[1;34m+-----------------------------------------------------------"
-      "--"
-      "+\033[0m\n");
+  (void)aver_time_consu;
 
   euler_cur = RotMtoEuler(_state.rot_end);
   // fout_out << std::setw(20)

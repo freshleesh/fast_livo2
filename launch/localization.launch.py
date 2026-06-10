@@ -3,9 +3,9 @@
 #
 # Usage:
 #   ros2 launch fast_livo localization.launch.py                 # yaml default (hall_0521_1)
-#   ros2 launch fast_livo localization.launch.py map:=my_seat    # override → fast_livo2/map/my_seat
+#   ros2 launch fast_livo localization.launch.py map:=my_seat    # override → stack_master/maps/my_seat
 #
-# `map` 인자는 fast_livo2/map/<name>/ 디렉터리 이름. middle_level_mac.launch.py 와 같은 패턴.
+# `map` 인자는 stack_master/maps/<name>/ 디렉터리 이름. middle_level_mac.launch.py 와 같은 패턴.
 
 import os
 from launch import LaunchDescription
@@ -16,8 +16,9 @@ from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
 
 
-# fast_livo2/map/ 절대경로. middle_level_mac 과 동일.
-MAPS_ROOT = "/Users/mini/ros2_ws/src/IFAC2026_SH/src/slam/fast_livo2/map"
+# Canonical map storage: stack_master/maps/<name>/ (src side — fast_livo
+# 가 SaveMap 으로 새 파일 쓰는 곳과 동일).
+MAPS_ROOT = "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps"
 
 
 def launch_setup(context, *args, **kwargs):
@@ -64,7 +65,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "map", default_value="",
-            description="Prior map name under fast_livo2/map/<name>/. "
+            description="Prior map name under stack_master/maps/<name>/. "
                         "Empty = yaml default (relocalization.prior_map_dir).",
         ),
         OpaqueFunction(function=launch_setup),

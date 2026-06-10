@@ -12,7 +12,7 @@ import open3d as o3d
 
 
 # ============================== CONFIG ==============================
-MAP_ROOT    = "/Users/mini/ros2_ws/src/IFAC2026_SH/src/slam/fast_livo2/map"  # parent of named map dirs
+MAP_ROOT    = "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps"  # parent of named map dirs
 MAP_NAME    = "hall_0521_1"     # reads <MAP_ROOT>/<MAP_NAME>/cloudGlobal.pcd,
                            # writes  <MAP_ROOT>/<MAP_NAME>_2D/<MAP_NAME>.pgm
 PCD_FILE    = "cloudGlobal.pcd"  # input PCD file name inside the map dir

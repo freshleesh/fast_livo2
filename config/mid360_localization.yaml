@@ -7,7 +7,7 @@
       img_en: 0   # LIVO localization mode
       lidar_en: 1
       ros_driver_bug_fix: false
-      map_save_path: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/slam/fast_livo2/map/"
+      map_save_path: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps/"
       enable_zupt: false
       zupt_noise: 0.05
       zupt_interval: 5
@@ -44,8 +44,8 @@
       scan_line: 6
       blind: 0.1
       max_range: 500.0
-      feature_extract_enabled: false
-      img_filter_en: true   # see3cam runs at 60 FPS; subsample to 30 FPS so img_cbk's 20 ms gap check passes
+      feature_extract_enabled: true
+      img_filter_en: false   # see3cam runs at 60 FPS; subsample to 30 FPS so img_cbk's 20 ms gap check passes
       img_filter_fre: 2
 
     vio:
@@ -62,9 +62,9 @@
 
     imu:
       imu_en: true
-      imu_int_frame: 50
-      acc_cov: 0.2
-      gyr_cov: 0.5
+      imu_int_frame: 400 
+      acc_cov: 2.0   # was 0.2 — distrust IMU more so LiDAR has more authority (Step 1 diagnostic)
+      gyr_cov: 1.0   # was 0.5 — same reason
       b_acc_cov: 0.001
       b_gyr_cov: 0.001
 
@@ -125,6 +125,6 @@
     # ==================== Relocalization parameters ====================
     relocalization:
       enabled: true
-      prior_map_dir: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/slam/fast_livo2/map/hall_0521_1"
+      prior_map_dir: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps/hall_0609"
       initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # x, y, z, roll, pitch, yaw
       use_initial_pose_topic: true

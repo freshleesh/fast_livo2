@@ -478,10 +478,7 @@ void VoxelMapManager::StateEstimation(StatesGroup &state_propagat) {
       total_residual += fabs(ptpl_list_[i].dis_to_plane_);
     }
     effct_feat_num_ = ptpl_list_.size();
-    cout << "[ LIO ] Raw feature num: " << feats_undistort_->size()
-         << ", downsampled feature num:" << feats_down_size_
-         << " effective feature num: " << effct_feat_num_
-         << " average residual: " << total_residual / effct_feat_num_ << endl;
+    // [ LIO ] per-iter feature num/residual log suppressed; see [Reloc] summary.
 
     /*** Computation of Measuremnt Jacobian matrix H and measurents covarience
      * ***/
@@ -698,12 +695,7 @@ void VoxelMapManager::StateEstimation2(StatesGroup &state_propagat) {
       total_residual += std::fabs(ptpl_list_[i].dis_to_plane_);
     }
     effct_feat_num_ = ptpl_list_.size();
-    std::cout << "[ LIO ] Raw feature num: " << feats_undistort_->size()
-              << ", downsampled feature num:" << feats_down_size_
-              << " effective feature num: " << effct_feat_num_
-              << " average residual: "
-              << (effct_feat_num_ ? total_residual / effct_feat_num_ : 0.0)
-              << std::endl;
+    // [ LIO ] per-iter feature num/residual log suppressed; see [Reloc] summary.
 
     // 累加 HᵀR⁻¹H(6x6) 与 HᵀR⁻¹z(6x1)
     using Mat6 = Eigen::Matrix<double, 6, 6>;
