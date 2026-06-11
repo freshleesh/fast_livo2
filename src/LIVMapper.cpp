@@ -1800,6 +1800,25 @@ bool LIVMapper::handleLIO() {
   aver_time_consu =
       aver_time_consu * (frame_num - 1) / frame_num + (t4 - t0) / frame_num;
 
+  // Real-time budget: at 10 Hz lidar a frame over ~100 ms makes the buffers
+  // fall behind, so the next scan starts from a staler prior — itself a
+  // divergence trigger. Warn on overrun, summarize every 30 frames.
+  {
+    static double win_max = 0;
+    static int win_cnt = 0;
+    const double t_total = t4 - t0;
+    win_max = std::max(win_max, t_total);
+    if (t_total > 0.09)
+      printf("\033[1;31m[ LIO ] frame OVERRUN: %.1f ms (budget ~100 ms)\033[0m\n",
+             t_total * 1000);
+    if (++win_cnt >= 30) {
+      printf("[ LIO ] frame time: avg %.1f ms, max(30f) %.1f ms\n",
+             aver_time_consu * 1000, win_max * 1000);
+      win_max = 0;
+      win_cnt = 0;
+    }
+  }
+
   // aver_time_icp = aver_time_icp * (frame_num - 1) / frame_num + (t2 - t1) /
   // frame_num; aver_time_map_inre = aver_time_map_inre * (frame_num - 1) /
   // frame_num + (t4 - t3) / frame_num; aver_time_solve = aver_time_solve *
@@ -2482,20 +2501,34 @@ void LIVMapper::extractWheelVel(LidarMeasureGroup &meas) {
     return;
   }
 
-  // get start odometry at the beinning of the scan
-  nav_msgs::msg::Odometry startOdomMsg;
-  for (size_t i = 0; i < (size_t)localOdomQueue.size(); ++i) {
-    startOdomMsg = localOdomQueue[i];
-    if (stamp2Sec(startOdomMsg.header.stamp) < start_time)
-      continue;
-    else
-      break;
-  }
+  // Interpolate wheel velocity at the state time (scan end). Taking the first
+  // sample after start_time left up to one odom period (20 ms @ 50 Hz) of
+  // mismatch — exactly when speed changes (corner entry/exit) that biased the
+  // update.
+  auto twistVel = [](const nav_msgs::msg::Odometry &o) {
+    return V3D(o.twist.twist.linear.x, o.twist.twist.linear.y,
+               o.twist.twist.linear.z);
+  };
+  size_t idx = 0;
+  while (idx < localOdomQueue.size() &&
+         stamp2Sec(localOdomQueue[idx].header.stamp) < start_time)
+    ++idx;
 
-  wheel_linear_velocity_[0] = wheel_vel_sign_ * startOdomMsg.twist.twist.linear.x;
-  wheel_linear_velocity_[1] = wheel_vel_sign_ * startOdomMsg.twist.twist.linear.y;
-  wheel_linear_velocity_[2] = wheel_vel_sign_ * startOdomMsg.twist.twist.linear.z;
-  if(abs(wheel_linear_velocity_[2])<0.200) wheel_linear_velocity_[2] = 0.0;
+  V3D vel;
+  if (idx == 0) {
+    vel = twistVel(localOdomQueue.front());
+  } else if (idx == localOdomQueue.size()) {
+    vel = twistVel(localOdomQueue.back());
+  } else {
+    const auto &a = localOdomQueue[idx - 1];
+    const auto &b = localOdomQueue[idx];
+    const double ta = stamp2Sec(a.header.stamp);
+    const double tb = stamp2Sec(b.header.stamp);
+    const double w = tb > ta ? (start_time - ta) / (tb - ta) : 1.0;
+    vel = (1.0 - w) * twistVel(a) + w * twistVel(b);
+  }
+  wheel_linear_velocity_ = wheel_vel_sign_ * vel;
+  if (std::abs(wheel_linear_velocity_[2]) < 0.200) wheel_linear_velocity_[2] = 0.0;
   if (!wheel_odom_updated_)
     std::cout << "[Wheel] odom stream active, v="
               << wheel_linear_velocity_.transpose() << std::endl;
