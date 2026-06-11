@@ -1,142 +1,146 @@
 /**:
   ros__parameters:
     common:
-      img_topic: "/image_raw/compressed"
-      lid_topic: "/livox/lidar"
-      imu_topic: "/livox/imu"
-      img_en: 0   # LIVO localization mode
-      lidar_en: 1
-      ros_driver_bug_fix: false
-      map_save_path: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps/"
-      enable_zupt: false
-      zupt_noise: 0.05
-      zupt_interval: 5
+      img_topic: "/image_raw/compressed"   # 카메라 이미지 토픽 (CompressedImage 구독)
+      lid_topic: "/livox/lidar"            # LiDAR 포인트클라우드 토픽
+      imu_topic: "/livox/imu"              # IMU 토픽
+      img_en: 0     # 카메라 사용 여부 — localization은 LIO-only (patch map은 novel view에 약해 reloc에 부적합)
+      lidar_en: 1   # LiDAR 사용 (0이면 vision-only)
+      ros_driver_bug_fix: false   # true면 IMU 스탬프를 LiDAR 프레임 기준으로 재정렬 (드라이버 타임스탬프 지터 보정)
+      map_save_path: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps/"   # save_map 저장 루트 (실차 mac 값 — 머신별은 ~/.config/fast_livo/local.yaml)
+      enable_zupt: false   # z위치(pos.z→0) 의사측정 — prior map이 z를 잡아주므로 off. z 드리프트 보이면 on
+      zupt_noise: 0.05      # 위 구속의 측정 노이즈 σ(m). 작을수록 z를 강하게 묶음
+      zupt_interval: 5      # 적용 주기: frame_num % interval == 0 인 프레임에만
 
     extrin_calib:
-      extrinsic_T: [-0.011, -0.02329, 0.04412]   # IMU -> LiDAR
+      # IMU→LiDAR 외참. 전파/undistortion/점 투영 전반에 사용 (틀리면 회전 시 오차 증폭)
+      extrinsic_T: [-0.011, -0.02329, 0.04412]   # 병진 (m)
       extrinsic_R: [1.0, 0.0, 0.0,
                     0.0, 1.0, 0.0,
-                    0.0, 0.0, 1.0]
+                    0.0, 0.0, 1.0]               # 회전 (행렬, row-major)
+      # LiDAR→카메라 외참. VIO에서 LiDAR 점을 이미지에 투영할 때 사용 (img_en=0이면 무관)
       Rcl:  [0.0205784, -0.999709,  -0.0125895,
              0.324516,   0.0185893, -0.945697,
              0.945656,   0.0153754,  0.324804]
-      Pcl: [0.0119364, -0.060614, -0.0652314]
+      Pcl: [0.0119364, -0.060614, -0.0652314]    # (m)
 
     wheel:
-      enable_wheel_odom: true
-      est_wheel_extrinsic: false   # set true ONLY for slow figure-8 calibration runs
-      odom_topic: "/odom"   # vesc_to_odom_node output (twist = wheel-frame velocity)
-      vel_sign: -1.0   # VESC reports -v when driving forward (REJECT |r|≈2×speed diagnosis).
-                       # Set back to 1.0 if vesc_to_odom.cpp negation is fixed at the driver.
-      # R_ex from IMU-init gravity (2.4572, 0.3217, -9.4918): minimal rotation
-      # car(z-up, x-fwd) -> IMU. Mount tilt rpy ≈ (1.94, -14.51, 0)°, yaw=0 assumed.
-      # Old value (pitch 2.3° + y/z flip) was from a previous mount — replaced.
+      enable_wheel_odom: true      # 휠 odom 속도 측정 융합 — LiDAR 업데이트 후 소프트 구속으로 적용 (코너 속도 폭주 방지용)
+      est_wheel_extrinsic: false   # 휠-IMU 외참(R_ex,p_ex) 온라인 공동추정 — 슬립 없는 저속 8자 캘리브레이션 주행에서만 켤 것
+      odom_topic: "/odom"   # 휠 odom 토픽 — vesc_to_odom_node 출력 (twist = 휠 프레임 속도)
+      vel_sign: -1.0   # 휠 속도 부호 보정. VESC가 전진 시 -v를 내보냄 (REJECT |r|≈2×속도 진단으로 발견).
+                       # 드라이버(vesc_to_odom.cpp)의 부호 반전이 고쳐지면 1.0으로 되돌릴 것
+      # R_ex: 휠(차체 z-up, x-fwd)→IMU 회전 외참. IMU 초기화 중력 (2.4572, 0.3217, -9.4918)에서
+      # 유도한 최소회전. 마운트 기울기 rpy ≈ (1.94, -14.51, 0)°, yaw=0 가정.
+      # (구버전 값(pitch 2.3° + y/z 반전)은 이전 마운트 기준이라 교체됨)
       R_wheel_to_imu: [ 0.9681128, -0.0041747, -0.2504798,
                        -0.0041747,  0.9994534, -0.0327932,
                         0.2504798,  0.0327932,  0.9675663]
-      # p_ex = R_ex @ (IMU->rear-axle in car frame).
-      # Measured: rear axle is 28 cm behind, 7.5 cm below IMU (car frame: x-fwd, y-left, z-up).
-      # car-frame vector = (-0.28, 0, -0.075) → IMU-frame after R_ex.
+      # p_ex = R_ex @ (IMU→뒷차축, 차체 프레임): lever arm. 실측: 뒷차축이 IMU보다 28cm 뒤, 7.5cm 아래
+      # → 차체 프레임 (-0.28, 0, -0.075)를 R_ex로 변환. 회전 중 ω×p 항으로 들어가므로 cm 단위 정확도 필요
       p_wheel_to_imu: [-0.25229, 0.00363, -0.14270]
-      # x: forward speed from ERPM — trustworthy (when not slipping; gate handles slip).
-      # y/z: vesc_to_odom hardcodes vy=vz=0 ("no slip" claim) which is FALSE during
-      # cornering — keep nearly uninformative so lateral slip doesn't fight LiDAR.
+      # 휠 속도 측정 σ [x,y,z] (m/s — 코드에서 제곱해 분산으로 사용).
+      # x: ERPM 기반 전진속도라 신뢰 가능 (전진 슬립은 절대잔차 게이트가 거름)
+      # y/z: vesc_to_odom이 vy=vz=0으로 하드코딩("슬립 없음" 가정)하는데 코너링 중엔 거짓 —
+      #      거의 무정보로 크게 둬서 측면 슬립이 LiDAR와 싸우지 않게 함
       wheel_mea_cov:  [0.005, 1.0, 1.0]
 
     time_offset:
-      imu_time_offset: 0.0
-      img_time_offset: 0.0   # bag 2026_05_13-21_45_34: B_lidar (1778672040.204) + camera latency (0.002)
-      exposure_time_init: 0.0
-      lidar_time_offset: 0.0
+      imu_time_offset: 0.0    # (주의: 현재 코드가 파라미터로 읽지 않음 — 항상 0으로 동작)
+      img_time_offset: 0.0    # 이미지 스탬프에 더하는 오프셋(s) — bag 2026_05_13-21_45_34: B_lidar (1778672040.204) + camera latency (0.002)
+      exposure_time_init: 0.0 # 이미지 캡처 시각 보정(s) — LiDAR 프레임과의 페어링 기준 시각에 가산
+      lidar_time_offset: 0.0  # LiDAR 스탬프에 더하는 오프셋 (s)
 
     preprocess:
-      point_filter_num: 1   # 2 for relocalization
-      filter_size_surf: 0.05
-      lidar_type: 7
-      scan_line: 6
-      blind: 0.1
-      max_range: 500.0
-      feature_extract_enabled: true
-      img_filter_en: false   # see3cam runs at 60 FPS; subsample to 30 FPS so img_cbk's 20 ms gap check passes
-      img_filter_fre: 2
+      point_filter_num: 1   # 점 솎아내기 간격: N점 중 1점만 사용 (1=전부 사용, 3=1/3만).
+                            # 점 하나하나가 맵 매칭 제약 1개라서, 코너처럼 유효 제약이 급감하는
+                            # 구간을 버티려면 CPU가 허용하는 한 1로 둘 것
+      filter_size_surf: 0.05    # 스캔 다운샘플 VoxelGrid leaf (m) — mapping(0.10)보다 촘촘
+      lidar_type: 7             # 입력 파서 선택: 7=MID360, 1=AVIA(CustomMsg) 등
+      scan_line: 6              # 스캔 라인 수 (ring >= scan_line 인 점 제거)
+      blind: 0.1                # 최소 거리 (m) — 차체 반사 등 근접 노이즈 제거
+      max_range: 500.0          # 최대 거리 (m) — 초과 점 제거
+      feature_extract_enabled: true    # 평면/엣지 특징 추출 사용 (false면 raw 데시메이션 점 사용)
+      img_filter_en: false      # 이미지 서브샘플링 on/off — img_en=0이라 무관 (see3cam 60FPS→30FPS용)
+      img_filter_fre: 2         # N장 중 1장만 처리 (2=절반)
 
-    vio:
-      max_iterations: 5
-      outlier_threshold: 1000
-      img_point_cov: 100
-      patch_size: 8
-      patch_pyrimid_level: 2
-      normal_en: true
-      raycast_en: false
-      inverse_composition_en: false
-      exposure_estimate_en: true
-      inv_expo_cov: 0.1
+    vio:   # img_en=0이므로 이 섹션은 현재 미사용
+      max_iterations: 5             # 이미지 ESIKF 반복 횟수
+      outlier_threshold: 1000       # 패치 photometric 오차 거부 임계 (픽셀강도 × patch_size²)
+      img_point_cov: 100            # 이미지 측정 노이즈 — 클수록 vision 가중치 낮음
+      patch_size: 8                 # 패치 한 변 픽셀 수 (8→64픽셀 패치)
+      patch_pyrimid_level: 2        # 이미지 피라미드 레벨 수 — 클수록 큰 모션 수렴, 연산 증가
+      normal_en: true               # 점 normal 기반 homography 워핑 (시점 변화 보정)
+      raycast_en: false             # 레이캐스트 occlusion 처리
+      inverse_composition_en: false # inverse compositional 업데이트 (큰 모션에 안정적)
+      exposure_estimate_en: true    # 역노출시간 상태 추정 (조명/노출 변화 보상)
+      inv_expo_cov: 0.1             # 역노출시간 프로세스 노이즈
 
     imu:
-      imu_en: true
-      imu_int_frame: 400 
-      acc_cov: 5.0   # was 2.0 → 5.0 (Step 2: suppress centripetal accel leaking into vz during fast turns)
-      gyr_cov: 1.0   # was 0.5 — same reason
-      b_acc_cov: 0.001
-      b_gyr_cov: 0.001
+      imu_en: true         # IMU 융합 사용. false(ONLY_LO)면 undistortion·모션 prior가 빠져 회전 시 즉시 발산
+      imu_int_frame: 400   # 정적 초기화에 쓸 IMU 프레임 수 — mapping(50)보다 길게: 바이어스/중력 더 정확, 시작 지연
+      acc_cov: 5.0   # 가속도계 노이즈(전파 프로세스 노이즈 Q). 2.0→5.0: 고속 코너 원심가속도가 vz로 새는 것 억제 (Step 2)
+      gyr_cov: 1.0   # 자이로 노이즈(Q). 0.5→1.0 — 같은 이유. 클수록 IMU 전파를 덜 믿고 LiDAR 보정에 의존
+      b_acc_cov: 0.001   # (주의: 코드에서 0.0001 하드코딩 — yaml 값 미사용, LIVMapper.cpp:431)
+      b_gyr_cov: 0.001   # (주의: 코드에서 0.0001 하드코딩 — yaml 값 미사용, LIVMapper.cpp:430)
 
     lio:
-      max_iterations: 10   # was 3 (Step 2: more ESIKF iters for rotation convergence)
-      dept_err: 0.02
-      beam_err: 0.05
-      min_eigen_value: 0.003
-      voxel_size: 0.25
-      max_layer: 2
-      max_points_num: 50
-      layer_init_num: [5, 5, 5, 5, 5]
-      max_voxel_num: 50000   # larger for prior map
+      max_iterations: 10   # point-to-plane ESIKF 반복 한도. 3→10: 회전 수렴 (Step 2). 수렴 시 조기 종료하므로 상한 성격
+      dept_err: 0.02       # LiDAR 거리 노이즈 σ_r (m) — 점별 공분산 구성 (calcBodyCov)
+      beam_err: 0.05       # LiDAR 각도 노이즈 (deg) — 점별 공분산 접선방향. 키우면 회전 중 매칭에 관대 (과신 방지)
+      min_eigen_value: 0.003   # 평면 판정 PCA 최소고유값 — mapping(0.005)보다 낮춰 제약 수 확보 (거친 면도 허용)
+      voxel_size: 0.25     # 복셀맵 셀 크기 (m) — 작을수록 세밀, 메모리/연산 증가
+      max_layer: 2         # 복셀 내 옥트리 최대 깊이 — 깊을수록 세부 평면 분해
+      max_points_num: 50   # 복셀당 점 한도 — 초과 시 해당 복셀 업데이트 중단
+      layer_init_num: [5, 5, 5, 5, 5]   # 옥트리 층별 평면 초기화 최소 점 수
+      max_voxel_num: 50000   # prior map용으로 크게 (주의: 복셀맵에는 미적용 — VIO 쪽 한도(×0.25)로만 사용)
 
     local_map:
-      map_sliding_en: false
-      half_map_size: 100
-      sliding_thresh: 8.0
+      map_sliding_en: false   # 슬라이딩 윈도우 맵 관리 (주의: 호출부가 주석처리돼 현재 동작 안 함, LIVMapper.cpp:1708)
+      half_map_size: 100      # 슬라이딩 시 유지 반경 (복셀 단위)
+      sliding_thresh: 8.0     # 슬라이딩 트리거 이동 거리 (m)
 
     uav:
-      imu_rate_odom: true
-      gravity_align_en: true
+      imu_rate_odom: true      # LiDAR 프레임 사이 IMU 전파 odometry 고주파 발행 — 제어 루프용
+      gravity_align_en: true   # 초기 중력 정렬 (localization 모드에서는 코드가 무시하고 중력 고정)
 
     publish:
-      dense_map_en: false
-      pub_effect_point_en: false
-      pub_plane_en: false
-      pub_scan_num: 1
-      pub_rgb_cloud_en: true
-      blind_rgb_points: 0.1
-      rgb_cloud_interval: 1
-      depth_en: false
-      viz_timer_ms: 33
+      dense_map_en: false           # true=undistort 원본점 발행, false=다운샘플점만 (CPU 절약)
+      pub_effect_point_en: false    # 매칭에 실제 쓰인 점(ptpl) 발행 — 디버그용
+      pub_plane_en: false           # 복셀 평면 마커 발행 — RViz 디버그용 (무거움)
+      pub_scan_num: 1               # RGB 클라우드를 N프레임 누적마다 발행
+      pub_rgb_cloud_en: true        # 카메라 색 입힌 클라우드 발행 — img_en=0이라 사실상 무관
+      blind_rgb_points: 0.1         # RGB 칠할 때 제외할 최소 거리 (m)
+      rgb_cloud_interval: 1         # 로컬 RGB 클라우드 버퍼에 N프레임마다 1개 추가
+      depth_en: false               # 시각화 큐/로컬 클라우드 버퍼 비활성
+      viz_timer_ms: 33              # 시각화 발행 타이머 주기 (ms) — 추정 스레드와 분리된 publish 주기
 
     evo:
-      seq_name: "localization"
-      pose_output_en: false
+      seq_name: "localization"   # 궤적 로그 파일명 (Log/result/<seq_name>.txt)
+      pose_output_en: false      # KITTI 포맷 궤적 저장 on/off (evo 평가용)
 
     pcd_save:
-      pcd_save_en: false
-      colmap_output_en: false
-      interval: -1
-      filter_size_pcd: 0.04
+      pcd_save_en: false        # 누적 클라우드 PCD 저장 — localization은 불필요
+      colmap_output_en: false   # COLMAP 포맷(points3D.txt 등) 출력 — NeRF/GS 학습용
+      interval: -1              # N프레임마다 분할 저장 (-1=종료 시 한 번에)
+      filter_size_pcd: 0.04     # 저장 전 다운샘플 leaf (m)
 
-    loop:
-      loop_closure_enable_flag: false
-      loop_closure_frequency: 10.0
-      history_keyframe_search_radius: 15.0
-      history_keyframe_search_time_diff: 30.0
-      history_keyframe_search_num: 25
-      history_keyframe_fitness_score: 0.3
+    loop:   # 루프 클로저 (ScanContext 후보 → ICP 검증) — localization에서는 off
+      loop_closure_enable_flag: false       # 루프 클로저 스레드 on/off
+      loop_closure_frequency: 10.0          # 루프 탐지 시도 주기 (Hz)
+      history_keyframe_search_radius: 15.0  # 후보 키프레임 공간 탐색 반경 (m)
+      history_keyframe_search_time_diff: 30.0   # 후보로 인정할 최소 시간 간격 (s) — 직전 프레임 오매칭 방지
+      history_keyframe_search_num: 25       # ICP 서브맵에 합칠 인접 키프레임 수
+      history_keyframe_fitness_score: 0.3   # ICP fitness 임계 — 초과 시 루프 기각 (작을수록 엄격)
 
-    mapping:
-      keyframeAddingDistThreshold: 0.5
-      keyframeAddingAngleThreshold: 0.10
-      enable_gtsam: false
+    mapping:   # 포즈그래프(PGO) 키프레임 — enable_gtsam=false라 localization에서는 비활성
+      keyframeAddingDistThreshold: 0.5    # 키프레임 추가 최소 이동 (m)
+      keyframeAddingAngleThreshold: 0.10  # 키프레임 추가 최소 회전 (rad)
+      enable_gtsam: false                 # GTSAM iSAM2 포즈그래프 최적화 off (frozen prior map 매칭만 수행)
 
     # ==================== Relocalization parameters ====================
     relocalization:
-      enabled: true
-      prior_map_dir: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps/hall_0609"
-      initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # x, y, z, roll, pitch, yaw
-      use_initial_pose_topic: true
+      enabled: true   # localization 모드 스위치 — prior map 로드, 맵 업데이트/중력추정/GTSAM 비활성, ESIKF 반복 최소 8 강제
+      prior_map_dir: "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps/hall_0609"   # cloudGlobal.pcd + prior_map.fmap(복셀맵) 로드 경로 (머신별은 local.yaml, map:= 인자로도 덮어쓰기 가능)
+      initial_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]   # 초기 포즈 [x,y,z,roll,pitch,yaw] (m, rad) — 맵 원점 출발이면 0
+      use_initial_pose_topic: true   # /initialpose (RViz 2D Pose Estimate) 구독 — 추적 손실 시 수동 재앵커 가능
