@@ -129,6 +129,8 @@ Both main YAMLs cover `common`, `extrin_calib`, `preprocess`, `vio`, `imu`, `lio
 - Machine-specific values go in `~/.config/fast_livo/local.yaml` (untracked, outside the repo); both launches overlay it automatically when present. Template: [config/local.yaml.example](config/local.yaml.example).
 - `localization.launch.py`'s `map:=` root can be overridden per machine with the `FASTLIVO_MAPS_ROOT` env var (default = car mac path).
 
+**Sensor timestamping** (driver lives on the car, not in this repo): the livox driver stamps with ROS receive time (`now()`) for camera sync, which adds ~0.7 ms jitter — bad for high-rate rotation. [tools/livox_driver_timestamp_switch.patch](tools/livox_driver_timestamp_switch.patch) parameterizes this: mapping sessions keep `use_system_timestamp: true` (camera needs ROS clock), LIO-only localization sessions set `false` (device hardware time, no jitter). Caveat: hardware time breaks `/odom` (wheel) time alignment unless PTP-synced or offset-compensated.
+
 Key extrinsics:
 - `extrinsic_T/R`: IMU-to-LiDAR
 - `Rcl/Pcl`: LiDAR-to-Camera (rotation matrix + translation)

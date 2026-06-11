@@ -1,0 +1,71 @@
+# livox_ros_driver2 타임스탬프 소스 스위치 (차량 컴퓨터의 드라이버 트리에 적용)
+#
+# 배경: lddc.cpp가 현재 header.stamp를 cur_node_->now()(ROS 수신시각)로 찍도록
+# 패치돼 있다 (카메라와 클럭 공유 목적). 그런데 수신시각 스탬프는 ~0.7ms 지터가
+# 있어서 (실주행 bag 실측: dt std 0.73ms, 범위 1.3~8.5ms), 400°/s 회전에서
+# 샘플당 ~0.3° 자세 오차로 undistortion/전파에 들어간다.
+#
+# 방침: ROS 파라미터 use_system_timestamp 로 전환 가능하게.
+#   - true  (기본값) = 현행 그대로 now() 스탬프 → 카메라 쓰는 mapping 세션용
+#   - false          = 장치 하드웨어 시각(pkg.base_time) → LIO-only localization 세션용
+#
+# ── 1. lddc.h: Lddc 클래스에 멤버 추가 ─────────────────────────────────────
+#
+#   bool use_system_timestamp_ = true;   // ROS param "use_system_timestamp"
+#   bool ts_param_read_ = false;
+#
+# ── 2. lddc.cpp: 파라미터 1회 읽기 헬퍼 (클래스 내 private 메서드로 추가) ──
+#
+#   void Lddc::ReadTimestampParam() {
+#     if (ts_param_read_ || !cur_node_) return;
+#     if (!cur_node_->has_parameter("use_system_timestamp")) {
+#       cur_node_->declare_parameter("use_system_timestamp", true);
+#     }
+#     cur_node_->get_parameter("use_system_timestamp", use_system_timestamp_);
+#     ts_param_read_ = true;
+#     DRIVER_INFO(*cur_node_, "use_system_timestamp: %d", use_system_timestamp_);
+#   }
+#
+# ── 3. lddc.cpp: 기존 now() 패치 지점 3곳을 조건부로 교체 ─────────────────
+#
+# InitPointcloud2Msg (BUILDING_ROS2 분기):
+#   기존(현행 패치):  cloud.header.stamp = cur_node_->now();
+#   교체:
+#     ReadTimestampParam();
+#     cloud.header.stamp = use_system_timestamp_ ? cur_node_->now()
+#                                                : rclcpp::Time(timestamp);
+#
+# InitCustomMsg (BUILDING_ROS2 분기):
+#   기존(현행 패치):  livox_msg.header.stamp = cur_node_->now();
+#   교체:
+#     ReadTimestampParam();
+#     livox_msg.header.stamp = use_system_timestamp_ ? cur_node_->now()
+#                                                    : rclcpp::Time(timestamp);
+#
+# InitImuMsg (BUILDING_ROS2 분기):
+#   기존(현행 패치):  imu_msg.header.stamp = cur_node_->now();
+#   교체:
+#     ReadTimestampParam();
+#     imu_msg.header.stamp = use_system_timestamp_ ? cur_node_->now()
+#                                                  : rclcpp::Time(timestamp);
+#
+# (timestamp 변수는 업스트림 코드가 이미 갖고 있는 장치 시각 — PointCloud2/CustomMsg는
+#  pkg.base_time, IMU는 imu_data.time_stamp 유래. now() 패치 때 지웠다면 복원할 것.)
+#
+# ── 4. launch 분기 ──────────────────────────────────────────────────────────
+#
+# mapping 세션 (카메라 사용): 드라이버 launch 그대로 → 기본값 true, 변경 없음.
+# localization 세션 (LIO-only): livox driver Node에 파라미터 추가:
+#
+#   parameters=[..., {"use_system_timestamp": False}]
+#
+# ── 5. 주의사항 ─────────────────────────────────────────────────────────────
+#
+# * 이미 녹화된 bag에는 소급 적용 불가 — false로 켠 뒤 새로 녹화해야 효과 확인 가능.
+# * prior map은 정적 클라우드라 스탬프와 무관 — 기존 맵 그대로 사용 가능.
+# * false(하드웨어 시각)일 때 lidar/imu 스탬프는 장치 클럭 기준이라 ROS 시각과
+#   크게 어긋날 수 있다. fast_livo의 lidar↔imu 동기에는 문제없지만(같은 장치 클럭),
+#   /odom(wheel odom, VESC — ROS 시각)을 함께 융합하려면 시간축이 갈라진다.
+#   → wheel odom + 하드웨어 스탬프를 같이 쓰려면 MID360의 PTP 동기(time_sync 설정)로
+#     장치 클럭을 호스트에 동기시키거나, fast_livo의 lidar_time_offset으로 보정할 것.
+# * img를 쓰는 세션(LIVO mapping)은 반드시 true 유지 — 카메라는 ROS 시각이므로.
