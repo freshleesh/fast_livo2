@@ -13,13 +13,13 @@ import open3d as o3d
 
 # ============================== CONFIG ==============================
 MAP_ROOT    = "/Users/mini/ros2_ws/src/IFAC2026_SH/src/system/stack_master/maps"  # parent of named map dirs
-MAP_NAME    = "hall_0521_1"     # reads <MAP_ROOT>/<MAP_NAME>/cloudGlobal.pcd,
+MAP_NAME    = "hall_0609"     # reads <MAP_ROOT>/<MAP_NAME>/cloudGlobal.pcd,
                            # writes  <MAP_ROOT>/<MAP_NAME>_2D/<MAP_NAME>.pgm
 PCD_FILE    = "cloudGlobal.pcd"  # input PCD file name inside the map dir
 Z_MIN       = -0.5          # meters (inclusive)
 Z_MAX       = 2.0          # meters (inclusive)
 RESOLUTION  = 0.05         # cell size in meters
-MIN_POINTS  = 2            # min points per cell to mark occupied
+MIN_POINTS  = 3            # min points per cell to mark occupied
 # ====================================================================
 
 

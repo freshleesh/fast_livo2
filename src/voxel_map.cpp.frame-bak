@@ -1552,7 +1552,7 @@ void VoxelMapManager::pubSinglePlane(
     const VoxelPlane &single_plane, const float alpha,
     const Eigen::Vector3d rgb) {
   visualization_msgs::msg::Marker plane;
-  plane.header.frame_id = "map";
+  plane.header.frame_id = "camera_init";
   plane.header.stamp = rclcpp::Time();
   plane.ns = plane_ns;
   plane.id = single_plane.id_;

@@ -43,6 +43,12 @@ def launch_setup(context, *args, **kwargs):
         name="laserMapping",
         parameters=[main_params, camera_params, *extra_params],
         output="screen",
+        # Topic wiring for MPCC / spliner / planning stack.
+        # They all subscribe to the race-stack convention /car_state/*.
+        remappings=[
+            ("/aft_mapped_to_init",        "/car_state/odom"),   # nav_msgs/Odometry, main SLAM
+            ("/mavros/vision_pose/pose",   "/car_state/pose"),   # PoseStamped, body pose in map
+        ],
     )
 
     rviz_node = Node(
