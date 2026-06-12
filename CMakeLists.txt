@@ -157,6 +157,14 @@ set(dependencies
 
 set(COMMON_DEPENDENCIES OpenMP::OpenMP_CXX)
 
+# Strip -Wl,--no-undefined (injected by some find_package modules above) so the
+# intermediate shared libs may leave inter-library symbols unresolved, deferring
+# them to the final executable link. Upstream relies on this (macOS uses
+# -undefined dynamic_lookup); without it Linux fails to link libvio/liblaser_mapping.
+# Placed AFTER all find_package() calls so nothing re-adds the flag.
+string(REPLACE "-Wl,--no-undefined" "" CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS}")
+string(REPLACE "-Wl,--no-undefined" "" CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS}")
+
 # link_directories(${COMMON_DEPENDENCIES}
 #   ${vikit_common_LIBRARIES}/libvikit_common.so
 #   ${vikit_ros_LIBRARIES}/libvikit_ros.so
@@ -180,15 +188,25 @@ ament_target_dependencies(laser_mapping ${dependencies})
 ament_target_dependencies(incremental_mapping ${dependencies})
 ament_target_dependencies(pose_estimator ${dependencies})
 # linking libraries or executables to public dependencies
-# Use platform-independent suffix (macOS: .dylib, Linux: .so)
+# macOS builds vikit with plain cmake (conda include propagation issue), so
+# find_package exports no libs there — link the install tree directly.
+if(APPLE)
+  set(VIKIT_LINK_LIBS
+      $ENV{HOME}/ros2_ws/install/vikit_common/lib/libvikit_common${CMAKE_SHARED_LIBRARY_SUFFIX}
+      $ENV{HOME}/ros2_ws/install/vikit_ros/lib/libvikit_ros${CMAKE_SHARED_LIBRARY_SUFFIX})
+else()
+  set(VIKIT_LINK_LIBS ${vikit_common_LIBRARIES} ${vikit_ros_LIBRARIES})
+endif()
+
 target_link_libraries(laser_mapping
     pre
     vio
     lio
     imu_proc
     utils
-    /Users/mini/ros2_ws/install/vikit_common/lib/libvikit_common${CMAKE_SHARED_LIBRARY_SUFFIX}
-    /Users/mini/ros2_ws/install/vikit_ros/lib/libvikit_ros${CMAKE_SHARED_LIBRARY_SUFFIX}
+    gtsam
+    ${PCL_LIBRARIES}
+    ${VIKIT_LINK_LIBS}
     ${COMMON_DEPENDENCIES}
 )
 
@@ -197,6 +215,8 @@ target_link_libraries(vio ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
 target_link_libraries(lio utils ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
 target_link_libraries(pre ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
 target_link_libraries(imu_proc ${COMMON_DEPENDENCIES} "${cpp_typesupport_target}")
+target_link_libraries(incremental_mapping gtsam ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} "${cpp_typesupport_target}")
+target_link_libraries(pose_estimator incremental_mapping gtsam ${PCL_LIBRARIES} ${PYTHON_LIBRARIES} ${OpenCV_LIBRARIES} "${cpp_typesupport_target}")
 
 # macOS: dylibs must resolve all symbols at link time (unlike Linux .so).
 # Strategy: give intermediate libs -undefined dynamic_lookup so they can leave

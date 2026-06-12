@@ -20,6 +20,13 @@ def generate_launch_description():
     main_params = os.path.join(config_dir, "mid360_mapping.yaml")
     camera_params = os.path.join(config_dir, "camera_see3cam.yaml")
 
+    # 머신별 오버라이드 (git 미추적, repo 밖). 경로·img_en 등 머신마다 다른
+    # 값은 base yaml이 아니라 여기에 둔다. 템플릿: config/local.yaml.example
+    params = [main_params, camera_params]
+    local_params = os.path.expanduser("~/.config/fast_livo/local.yaml")
+    if os.path.exists(local_params):
+        params.append(local_params)
+
     use_rviz_arg = DeclareLaunchArgument(
         "use_rviz",
         default_value="True",
@@ -30,7 +37,7 @@ def generate_launch_description():
         package="fast_livo",
         executable="fastlivo_mapping",
         name="laserMapping",
-        parameters=[main_params, camera_params],
+        parameters=params,
         output="screen",
         # Topic wiring for MPCC / spliner / planning stack.
         # They all subscribe to the race-stack convention /car_state/*.

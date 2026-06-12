@@ -1,0 +1,16 @@
+# 머신별 오버라이드 템플릿.
+# ~/.config/fast_livo/local.yaml 로 복사해서 이 머신에 맞게 수정하면
+# mapping/localization launch가 base yaml 위에 자동으로 얹는다 (git 미추적).
+# base config(mid360_*.yaml)에는 실차(mac) 기준 값만 커밋할 것 — 머신별 경로를
+# base에 커밋하면 pull 때마다 충돌 핑퐁이 생긴다.
+#
+# 맵 루트가 다른 머신은 FASTLIVO_MAPS_ROOT 환경변수도 설정
+# (localization.launch.py의 map:= 인자가 참조).
+
+/**:
+  ros__parameters:
+    common:
+      img_en: 0                                  # 예: 이 머신 bag에 카메라 없음
+      map_save_path: "/home/leesh/ros2_ws/maps/"
+    relocalization:
+      prior_map_dir: "/home/leesh/ros2_ws/src/fast_livo/maps/gazebo_wall_2"
